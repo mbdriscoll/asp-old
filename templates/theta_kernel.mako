@@ -12,16 +12,16 @@
 
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
-#define NUM_BLOCKS_ESTEP 16 // Num of blocks per cluster for the E-step
-#define NUM_THREADS_ESTEP 512 // should be a power of 2 
-#define NUM_THREADS_MSTEP 256 // should be a power of 2
-#define NUM_EVENT_BLOCKS 4
-#define MAX_NUM_DIMENSIONS 50
-#define MAX_NUM_CLUSTERS 128
-#define DEVICE 0 // Which GPU to use, if more than 1
-#define DIAG_ONLY 0 // Using only diagonal covariance matrix, thus all dimensions are considered independent
-#define MAX_ITERS 10 // Maximum number of iterations for the EM convergence loop
-#define MIN_ITERS 10 // Minimum number of iterations for the EM convergence loop (normally 0 unless doing performance testing)
+#define NUM_BLOCKS_ESTEP   ${num_blocks_estep} // Num of blocks per cluster for the E-step
+#define NUM_THREADS_ESTEP  ${num_threads_estep} // should be a power of 2 
+#define NUM_THREADS_MSTEP  ${num_threads_mstep} // should be a power of 2
+#define NUM_EVENT_BLOCKS   ${num_event_blocks}
+#define MAX_NUM_DIMENSIONS ${max_num_dimensions}
+#define MAX_NUM_CLUSTERS   ${max_num_clusters}
+#define DEVICE             ${device_id} // Which GPU to use, if more than 1
+#define DIAG_ONLY          ${diag_only} // Using only diagonal covariance matrix, thus all dimensions are considered independent
+#define MAX_ITERS          ${max_iters} // Maximum number of iterations for the EM convergence loop
+#define MIN_ITERS          ${min_iters}// Minimum number of iterations (normally 0 unless doing performance testing)
 
 /*
  * Compute the multivariate mean of the FCS data

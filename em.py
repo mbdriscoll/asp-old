@@ -42,21 +42,47 @@ Y = np.r_[
     ]
 X = np.array(Y, dtype=np.float32)
 
-version = sys.argv[1]
-version_define_mapping = {'1' : 'CODEVAR_1', 
+version_in = sys.argv[1]
+version_suffix_list = ['CODEVAR_1A', 'CODEVAR_2A', 'CODEVAR_2B', 'CODEVAR_3A']
+version_suffix_mapping = {'1' : 'CODEVAR_1A', 
                           '2' : 'CODEVAR_2A',
                           '2A': 'CODEVAR_2A',
                           '2B': 'CODEVAR_2B',
                           '3' : 'CODEVAR_3A',
                           '3A': 'CODEVAR_3A' }
+version_suffix = version_suffix_mapping[version_in]
 num_event_blocks = 128
 
 # Render C/CUDA source templates based on inputs
 
 c_main_tpl = AspTemplate.Template(filename="templates/gaussian.mako")
 cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
-c_main_rend = c_main_tpl.render()
-cu_kern_rend = cu_kern_tpl.render()
+c_main_rend = c_main_tpl.render(
+    num_blocks_estep = 16,
+    num_threads_estep = 512,
+    num_threads_mstep = 256,
+    num_event_blocks = num_event_blocks,
+    max_num_dimensions = 50,
+    max_num_clusters = 128,
+    device_id = 0,
+    diag_only = 0,
+    max_iters = 10,
+    min_iters = 10,
+    enable_2b_buffer = 1 if version_suffix == 'CODEVAR_2B' else 0,
+    version_suffix=version_suffix
+    )
+cu_kern_rend = cu_kern_tpl.render(
+    num_blocks_estep = 16,
+    num_threads_estep = 512,
+    num_threads_mstep = 256,
+    num_event_blocks = num_event_blocks,
+    max_num_dimensions = 50,
+    max_num_clusters = 128,
+    device_id = 0,
+    diag_only = 0,
+    max_iters = 10,
+    min_iters = 10,
+    )
 
 cluster_t_decl = """typedef struct 
 {
@@ -82,13 +108,8 @@ host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.
 host_project_header_names = [ 'cutil_inline.h'] 
 
 aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
-    .def(pyublas::by_value_rw_member(
-         "means",
-         &return_array_container::means))
-    .def(pyublas::by_value_rw_member(
-         "covars",
-         &return_array_container::covars))
-    ;
+    .def(pyublas::by_value_rw_member( "means", &return_array_container::means))
+    .def(pyublas::by_value_rw_member( "covars", &return_array_container::covars)) ;
     boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
 for x in host_system_header_names: aspmod.add_to_preamble([Include(x, True)])
 for x in host_project_header_names: aspmod.add_to_preamble([Include(x, False)])
@@ -101,7 +122,6 @@ aspmod.add_function(c_main_rend, fname="main")
 cuda_mod = aspmod.cuda_module
 cuda_mod.add_to_preamble([Include('stdio.h',True)])
 cuda_mod.add_to_preamble([Line(cluster_t_decl)])
-cuda_mod.add_to_preamble([Define( version_define_mapping[version], 1)])
 cuda_mod.add_to_module([Line(cu_kern_rend)])
 
 seed_clusters_statements = [ 'seed_clusters<<< 1, NUM_THREADS_MSTEP >>>( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);' ]
@@ -111,26 +131,19 @@ estep2_statements = [ 'estep2<<<NUM_BLOCKS_ESTEP, NUM_THREADS_ESTEP>>>(d_fcs_dat
 mstep_N_statements = [ 'mstep_N<<<num_clusters, NUM_THREADS_MSTEP>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);' ]
 mstep_means_statements = ['dim3 gridDim1(num_clusters,num_dimensions);',
       'mstep_means<<<gridDim1, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ]
-mstep_covar_statements_v1 = [ 'dim3 gridDim2(num_clusters,num_dimensions*(num_dimensions+1)/2);',
-      'mstep_covariance<<<gridDim2, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);']
-mstep_covar_statements_v2a = [ 'int num_blocks = num_clusters;',
-      'int num_threads = num_dimensions*(num_dimensions+1)/2;',
-      'mstep_covariance_2a<<<num_clusters, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);' ]
-mstep_covar_statements_v2b = [ 
-      'int num_event_blocks = NUM_EVENT_BLOCKS;',
-      'int event_block_size = num_events%NUM_EVENT_BLOCKS == 0 ? num_events/NUM_EVENT_BLOCKS:num_events/(NUM_EVENT_BLOCKS-1);',
-      'dim3 gridDim2(num_clusters,num_event_blocks);',
-      'int num_threads = num_dimensions*(num_dimensions+1)/2;',
-      'mstep_covariance_2b<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events, event_block_size, num_event_blocks, temp_buffer_2b);' ]
-mstep_covar_statements_v3a = ['int num_blocks = num_dimensions*(num_dimensions+1)/2;',
-      'mstep_covariance_3a<<<num_blocks, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ]
-
-version_launch_mapping = {'1' : {'covar': mstep_covar_statements_v1},
-                          '2' : {'covar': mstep_covar_statements_v2a},
-                          '2A': {'covar': mstep_covar_statements_v2a},
-                          '2B': {'covar': mstep_covar_statements_v2b},
-                          '3' : {'covar': mstep_covar_statements_v3a},
-                          '3A': {'covar': mstep_covar_statements_v3a} }
+mstep_covar_launch_versions = {
+    'CODEVAR_1A':  [ 'dim3 gridDim2(num_clusters,num_dimensions*(num_dimensions+1)/2);',
+            'mstep_covariance<<<gridDim2, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ],
+    'CODEVAR_2A': [ 'int num_blocks = num_clusters;',
+            'int num_threads = num_dimensions*(num_dimensions+1)/2;',
+            'mstep_covariance_2a<<<num_clusters, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);' ],
+    'CODEVAR_2B': [ 'int num_event_blocks = NUM_EVENT_BLOCKS;',
+            'int event_block_size = num_events%NUM_EVENT_BLOCKS == 0 ? num_events/NUM_EVENT_BLOCKS:num_events/(NUM_EVENT_BLOCKS-1);',
+            'dim3 gridDim2(num_clusters,num_event_blocks);',
+            'int num_threads = num_dimensions*(num_dimensions+1)/2;',
+            'mstep_covariance_2b<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events, event_block_size, num_event_blocks, temp_buffer_2b);' ],
+    'CODEVAR_3A': [ 'int num_blocks = num_dimensions*(num_dimensions+1)/2;',
+            'mstep_covariance_3a<<<num_blocks, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ] }
 
 seed_clusters_launch_func = FunctionBody(  
                 FunctionDeclaration(Value('void', 'seed_clusters_launch'),
@@ -180,8 +193,8 @@ mstep_means_launch_func = FunctionBody(
                                     Value('int', 'num_clusters'),
                                     Value('int', 'num_events') ]),
                 Block([Statement(s) for s in mstep_means_statements]) )
-mstep_covar_launch_func = FunctionBody(
-                FunctionDeclaration(Value('void', 'mstep_covar_launch'),
+mstep_covar_launch_funcs = [ FunctionBody(
+                FunctionDeclaration(Value('void', 'mstep_covar_launch_' + v),
                                 [   Value('float*', 'd_fcs_data_by_dimension'), 
                                     Value('float*', 'd_fcs_data_by_event'), 
                                     Value('clusters_t*', 'd_clusters'), 
@@ -189,16 +202,17 @@ mstep_covar_launch_func = FunctionBody(
                                     Value('int', 'num_clusters'),
                                     Value('int', 'num_events'),
                                     Value('float*', 'temp_buffer_2b') ]),
-                Block([Statement(s) for s in version_launch_mapping[version]['covar']]) )
+                Block([Statement(s) for s in mstep_covar_launch_versions[v]]) ) for v in version_suffix_list ]
 
 for x in [  seed_clusters_launch_func, 
             constants_kernel_launch_func, 
             estep1_launch_func, 
             estep2_launch_func, 
             mstep_N_launch_func, 
-            mstep_means_launch_func,
-            mstep_covar_launch_func ]:
+            mstep_means_launch_func ]:
     cuda_mod.add_function(x) 
+for x in mstep_covar_launch_funcs:
+    cuda_mod.add_function(x)
 
 # Setup toolchain and compile
 

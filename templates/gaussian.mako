@@ -9,17 +9,18 @@
 
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
-#define NUM_BLOCKS_ESTEP 16 // Num of blocks per cluster for the E-step
-#define NUM_THREADS_ESTEP 512 // should be a power of 2 
-#define NUM_THREADS_MSTEP 256 // should be a power of 2
-#define NUM_EVENT_BLOCKS 4
-#define MAX_NUM_DIMENSIONS 50
-#define MAX_NUM_CLUSTERS 128
-#define DEVICE 0 // Which GPU to use, if more than 1
-#define DIAG_ONLY 0 // Using only diagonal covariance matrix, thus all dimensions are considered independent
-#define MAX_ITERS 10 // Maximum number of iterations for the EM convergence loop
-#define MIN_ITERS 10 // Minimum number of iterations for the EM convergence loop (normally 0 unless doing performance testing)
-#define ENABLE_VERSION_2B_BUFFER_ALLOC 1
+#define NUM_BLOCKS_ESTEP   ${num_blocks_estep} // Num of blocks per cluster for the E-step
+#define NUM_THREADS_ESTEP  ${num_threads_estep} // should be a power of 2 
+#define NUM_THREADS_MSTEP  ${num_threads_mstep} // should be a power of 2
+#define NUM_EVENT_BLOCKS   ${num_event_blocks}
+#define MAX_NUM_DIMENSIONS ${max_num_dimensions}
+#define MAX_NUM_CLUSTERS   ${max_num_clusters}
+#define DEVICE             ${device_id} // Which GPU to use, if more than 1
+#define DIAG_ONLY          ${diag_only} // Using only diagonal covariance matrix, thus all dimensions are considered independent
+#define MAX_ITERS          ${max_iters} // Maximum number of iterations for the EM convergence loop
+#define MIN_ITERS          ${min_iters}// Minimum number of iterations (normally 0 unless doing performance testing)
+#define ENABLE_CODEVAR_2B_BUFFER_ALLOC ${enable_2b_buffer}
+#define VERSION_SUFFIX     ${version_suffix}
 
 typedef struct return_array_container
 {
@@ -111,7 +112,7 @@ int main (
   }
 
   float *temp_buffer_2b = NULL;
-#if ENABLE_VERSION_2B_BUFFER_ALLOC
+#if ENABLE_CODEVAR_2B_BUFFER_ALLOC
   //scratch space to clear out clusters->R
   float *zeroR_2b = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
   for(int i = 0; i<num_dimensions*num_dimensions*original_num_clusters; i++) {
@@ -264,11 +265,11 @@ int main (
       mstep_means_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
       cudaThreadSynchronize();
             
-#if ENABLE_VERSION_2B_BUFFER_ALLOC
+#if ENABLE_CODEVAR_2B_BUFFER_ALLOC
       CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_clusters, cudaMemcpyHostToDevice) );
 #endif
       // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per cluster
-      mstep_covar_launch(d_fcs_data_by_dimension,d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events,temp_buffer_2b);
+      mstep_covar_launch_${version_suffix}(d_fcs_data_by_dimension,d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events,temp_buffer_2b);
       cudaThreadSynchronize();
                  
       CUT_CHECK_ERROR("M-step Kernel execution failed: ");
