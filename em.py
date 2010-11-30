@@ -1,7 +1,7 @@
 import numpy as np
 import numpy.linalg as la
 import asp.codegen.templating.template as AspTemplate
-import asp.jit.asp_module as aspm
+import asp.jit.asp_module as asp_module
 from codepy.cgen import *
 from codepy.cuda import CudaModule
 from codepy.cgen.cuda import CudaGlobal
@@ -41,8 +41,6 @@ Y = np.r_[
     np.random.randn(n, 2) + np.array([5, 5]),
     ]
 X = np.array(Y, dtype=np.float32)
-#np.set_printoptions(threshold=np.nan)
-#print repr(X)
 
 version = sys.argv[1]
 version_define_mapping = {'1' : 'CODEVAR_1', 
@@ -62,12 +60,12 @@ cu_kern_rend = cu_kern_tpl.render()
 
 # Create host-side module
 
-host = aspm.ASPModule()
+aspmod = asp_module.ASPModule(use_cuda=True)
 
 host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
 host_project_header_names = [ 'cutil_inline.h', 'gaussian.h'] 
 
-host.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
+aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
     .def(pyublas::by_value_rw_member(
          "means",
          &return_array_container::means))
@@ -76,18 +74,17 @@ host.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayCo
          &return_array_container::covars))
     ;
     boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
-for x in host_system_header_names: host.add_to_preamble([Include(x, True)])
-for x in host_project_header_names: host.add_to_preamble([Include(x, False)])
-host.add_to_preamble([Define( version_define_mapping[version], 1)])
-host.add_function(c_main_rend, fname="main")
-host.module.mod_body.append(Line(open('invert_matrix.cpp', 'r').read()))
+for x in host_system_header_names: aspmod.add_to_preamble([Include(x, True)])
+for x in host_project_header_names: aspmod.add_to_preamble([Include(x, False)])
+aspmod.add_to_preamble([Define( version_define_mapping[version], 1)])
+aspmod.add_function(c_main_rend, fname="main")
+aspmod.module.mod_body.append(Line(open('invert_matrix.cpp', 'r').read()))
 
 # Create cuda-device module
 
-cuda_mod = CudaModule(host.module)
+cuda_mod = aspmod.cuda_module
 cuda_mod.add_to_preamble([Include('stdio.h')])
 cuda_mod.add_to_preamble([Include('gaussian.h')])
-cuda_mod.add_to_preamble([Include('cuda.h')])
 cuda_mod.add_to_preamble([Define( version_define_mapping[version], 1)])
 cuda_mod.add_to_preamble([Define( "NUM_EVENT_BLOCKS", int(num_event_blocks))])
 cuda_mod.add_to_module([Line(cu_kern_rend)])
@@ -190,21 +187,21 @@ for x in [  seed_clusters_launch_func,
 
 # Setup toolchain and compile
 
-import codepy.toolchain
 def pyublas_inc():
     file, pathname, descr = find_module("pyublas")
     return join(pathname, "..", "include")
 def numpy_inc():
     file, pathname, descr = find_module("numpy")
     return join(pathname, "core", "include")
-nvcc_toolchain = codepy.toolchain.guess_nvcc_toolchain()
+nvcc_toolchain = aspmod.nvcc_toolchain
 nvcc_toolchain.cflags += ["-arch=sm_20"]
-host.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
+aspmod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
 nvcc_toolchain.add_library("project",['.','./include'],[],[])
-host.toolchain.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
+aspmod.toolchain.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 nvcc_toolchain.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 
-compiled_module = cuda_mod.compile(host.toolchain, nvcc_toolchain, debug=True)
+#compiled_module = cuda_mod.compile(aspmod.toolchain, nvcc_toolchain, debug=True)
+aspmod.compile()
 
 # Run E-M
 
@@ -212,10 +209,10 @@ splot = pl.subplot(111, aspect='equal')
 color_iter = itertools.cycle (['r', 'g', 'b', 'c'])
 
 #main( int device, int original_num_clusters, int num_dimensions, int num_events, pyublas::numpy_array<float> input_data )
-compiled_module.main( 0, M, D, N, X)
-means = compiled_module.trained.means.reshape((M, D))
+aspmod.main( 0, M, D, N, X)
+means = aspmod.compiled_module.trained.means.reshape((M, D))
 print means
-covars = compiled_module.trained.covars.reshape((M, D, D))
+covars = aspmod.compiled_module.trained.covars.reshape((M, D, D))
 print covars
 pl.scatter(X.T[0], X.T[1], .8, color='k')
 for i, (mean, covar, color) in enumerate(zip(means, covars, color_iter)):
