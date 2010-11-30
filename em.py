@@ -38,7 +38,7 @@ np.random.seed(0)
 C = np.array([[0., -0.7], [3.5, .7]])
 Y = np.r_[
     np.dot(np.random.randn(n, 2), C),
-    np.random.randn(n, 2) + np.array([5, 5]),
+    np.random.randn(n, 2) + np.array([3, 3]),
     ]
 X = np.array(Y, dtype=np.float32)
 
@@ -58,12 +58,28 @@ cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
 c_main_rend = c_main_tpl.render()
 cu_kern_rend = cu_kern_tpl.render()
 
+cluster_t_decl = """typedef struct 
+{
+    // Key for array lengths
+    //  N = number of events
+    //  M = number of clusters
+    //  D = number of dimensions
+    float* N;        // expected # of pixels in cluster: [M]
+    float* pi;       // probability of cluster in GMM: [M]
+    float* constant; // Normalizing constant [M]
+    float* avgvar;    // average variance [M]
+    float* means;   // Spectral mean for the cluster: [M*D]
+    float* R;      // Covariance matrix: [M*D*D]
+    float* Rinv;   // Inverse of covariance matrix: [M*D*D]
+    float* memberships; // Fuzzy memberships: [N*M]
+} clusters_t;"""
+
 # Create host-side module
 
 aspmod = asp_module.ASPModule(use_cuda=True)
 
 host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
-host_project_header_names = [ 'cutil_inline.h', 'gaussian.h'] 
+host_project_header_names = [ 'cutil_inline.h'] 
 
 aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
     .def(pyublas::by_value_rw_member(
@@ -76,23 +92,22 @@ aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArray
     boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
 for x in host_system_header_names: aspmod.add_to_preamble([Include(x, True)])
 for x in host_project_header_names: aspmod.add_to_preamble([Include(x, False)])
-aspmod.add_to_preamble([Define( version_define_mapping[version], 1)])
+aspmod.add_to_preamble([Line(cluster_t_decl)])
 aspmod.add_function(c_main_rend, fname="main")
-aspmod.module.mod_body.append(Line(open('invert_matrix.cpp', 'r').read()))
+#aspmod.module.mod_body.append(Line(open('invert_matrix.cpp', 'r').read()))
 
 # Create cuda-device module
 
 cuda_mod = aspmod.cuda_module
-cuda_mod.add_to_preamble([Include('stdio.h')])
-cuda_mod.add_to_preamble([Include('gaussian.h')])
+cuda_mod.add_to_preamble([Include('stdio.h',True)])
+cuda_mod.add_to_preamble([Line(cluster_t_decl)])
 cuda_mod.add_to_preamble([Define( version_define_mapping[version], 1)])
-cuda_mod.add_to_preamble([Define( "NUM_EVENT_BLOCKS", int(num_event_blocks))])
 cuda_mod.add_to_module([Line(cu_kern_rend)])
 
 seed_clusters_statements = [ 'seed_clusters<<< 1, NUM_THREADS_MSTEP >>>( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);' ]
 constants_kernel_statements = [ 'constants_kernel<<<original_num_clusters, 64>>>(d_clusters,original_num_clusters,num_dimensions);' ]
-estep1_statements = [ 'estep1<<<dim3(NUM_BLOCKS,num_clusters), NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods);' ]
-estep2_statements = [ 'estep2<<<NUM_BLOCKS, NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);' ]
+estep1_statements = [ 'estep1<<<dim3(NUM_BLOCKS_ESTEP,num_clusters), NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods);' ]
+estep2_statements = [ 'estep2<<<NUM_BLOCKS_ESTEP, NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);' ]
 mstep_N_statements = [ 'mstep_N<<<num_clusters, NUM_THREADS_MSTEP>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);' ]
 mstep_means_statements = ['dim3 gridDim1(num_clusters,num_dimensions);',
       'mstep_means<<<gridDim1, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ]

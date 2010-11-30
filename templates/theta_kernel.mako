@@ -1,8 +1,7 @@
 /*
  * CUDA Kernels for Expectation Maximization with Gaussian Mixture Models
  *
- * Author: Andrew Pangborn
- * 
+ * Original Author: Andrew Pangborn
  * Department of Computer Engineering
  * Rochester Institute of Technology
  */
@@ -10,6 +9,19 @@
 
 #ifndef _TEMPLATE_KERNEL_H_
 #define _TEMPLATE_KERNEL_H_
+
+#define PI  3.1415926535897931
+#define COVARIANCE_DYNAMIC_RANGE 1E6
+#define NUM_BLOCKS_ESTEP 16 // Num of blocks per cluster for the E-step
+#define NUM_THREADS_ESTEP 512 // should be a power of 2 
+#define NUM_THREADS_MSTEP 256 // should be a power of 2
+#define NUM_EVENT_BLOCKS 4
+#define MAX_NUM_DIMENSIONS 50
+#define MAX_NUM_CLUSTERS 128
+#define DEVICE 0 // Which GPU to use, if more than 1
+#define DIAG_ONLY 0 // Using only diagonal covariance matrix, thus all dimensions are considered independent
+#define MAX_ITERS 10 // Maximum number of iterations for the EM convergence loop
+#define MIN_ITERS 10 // Minimum number of iterations for the EM convergence loop (normally 0 unless doing performance testing)
 
 /*
  * Compute the multivariate mean of the FCS data
@@ -35,7 +47,7 @@ __device__ void averageVariance(float* fcs_data, float* means, int num_dimension
     // access thread id
     int tid = threadIdx.x;
     
-    __shared__ float variances[NUM_DIMENSIONS];
+    __shared__ float variances[MAX_NUM_DIMENSIONS];
     __shared__ float total_variance;
     
     // Compute average variance for each dimension
@@ -162,7 +174,7 @@ __device__ void compute_constants(clusters_t* clusters, int num_clusters, int nu
     
     float log_determinant;
     
-    __shared__ float matrix[NUM_DIMENSIONS*NUM_DIMENSIONS];
+    __shared__ float matrix[MAX_NUM_DIMENSIONS*MAX_NUM_DIMENSIONS];
     
     // Invert the matrix for every cluster
     int c = blockIdx.x;
@@ -209,7 +221,7 @@ seed_clusters( float* fcs_data, clusters_t* clusters, int num_dimensions, int nu
     int num_threads = blockDim.x;
 
     // shared memory
-    __shared__ float means[NUM_DIMENSIONS];
+    __shared__ float means[MAX_NUM_DIMENSIONS];
     
     // Compute the means
     mvtmeans(fcs_data, num_dimensions, num_events, means);
@@ -277,14 +289,14 @@ __device__ float parallelSum(float* data, const unsigned int ndata) {
 
 __device__ void compute_indices(int num_events, int* start, int* stop) {
     // Break up the events evenly between the blocks
-    int num_pixels_per_block = num_events / NUM_BLOCKS;
+    int num_pixels_per_block = num_events / NUM_BLOCKS_ESTEP;
     // Make sure the events being accessed by the block are aligned to a multiple of 16
     num_pixels_per_block = num_pixels_per_block - (num_pixels_per_block % 16);
     
     *start = blockIdx.x * num_pixels_per_block + threadIdx.x;
     
     // Last block will handle the leftover events
-    if(blockIdx.x == NUM_BLOCKS-1) {
+    if(blockIdx.x == NUM_BLOCKS_ESTEP-1) {
         *stop = num_events;
     } else {
         *stop = (blockIdx.x+1) * num_pixels_per_block;
@@ -295,8 +307,8 @@ __global__ void
 estep1(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_events, float* likelihood) {
     
     // Cached cluster parameters
-    __shared__ float means[NUM_DIMENSIONS];
-    __shared__ float Rinv[NUM_DIMENSIONS*NUM_DIMENSIONS];
+    __shared__ float means[MAX_NUM_DIMENSIONS];
+    __shared__ float Rinv[MAX_NUM_DIMENSIONS*MAX_NUM_DIMENSIONS];
     float cluster_pi;
     float constant;
     const unsigned int tid = threadIdx.x;
@@ -364,7 +376,7 @@ estep2(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_cluste
     float denominator_sum;
     
     // Break up the events evenly between the blocks
-    int num_pixels_per_block = num_events / NUM_BLOCKS;
+    int num_pixels_per_block = num_events / NUM_BLOCKS_ESTEP;
     // Make sure the events being accessed by the block are aligned to a multiple of 16
     num_pixels_per_block = num_pixels_per_block - (num_pixels_per_block % 16);
     int tid = threadIdx.x;
@@ -374,7 +386,7 @@ estep2(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_cluste
     start_index = blockIdx.x * num_pixels_per_block + tid;
     
     // Last block will handle the leftover events
-    if(blockIdx.x == NUM_BLOCKS-1) {
+    if(blockIdx.x == NUM_BLOCKS_ESTEP-1) {
         end_index = num_events;
     } else {
         end_index = (blockIdx.x+1) * num_pixels_per_block;
@@ -606,7 +618,7 @@ mstep_covariance(float* fcs_data, clusters_t* clusters, int num_dimensions, int 
     int matrix_index = row * num_dimensions + col;
 
     // Store the means in shared memory to speed up the covariance computations
-    __shared__ float means[NUM_DIMENSIONS];
+    __shared__ float means[MAX_NUM_DIMENSIONS];
     // copy the means for this cluster into shared memory
     if(tid < num_dimensions) {
         means[tid] = clusters->means[c*num_dimensions+tid];
@@ -675,21 +687,12 @@ mstep_covariance_2a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
     int matrix_index = row * num_dimensions + col;
 
     // Store the means in shared memory to speed up the covariance computations
-    __shared__ float means[NUM_DIMENSIONS];
+    __shared__ float means[MAX_NUM_DIMENSIONS];
 
     // copy the means for this cluster into shared memory
     if(tid < num_dimensions) {
         means[tid] = clusters->means[c*num_dimensions+tid];
     }
-    
-#ifdef SH_MEM_EVENTS
-    __shared__ float events[NUM_EVENTS];
-    for(int event=tid; event < num_events*num_dimensions; event+=blockDim.x) {
-      if(event<num_events*num_dimensions) {
-        events[event] = fcs_data[event];
-      }
-    }
-#endif    
     
     // Sync to wait for all params to be loaded to shared memory
     __syncthreads();
@@ -752,52 +755,28 @@ mstep_covariance_2b(float* fcs_data, clusters_t* clusters, int num_dimensions, i
     int matrix_index = row * num_dimensions + col;
 
     // Store the means in shared memory to speed up the covariance computations
-    __shared__ float means[NUM_DIMENSIONS];
-    __shared__ float myR[NUM_DIMENSIONS*NUM_DIMENSIONS];
+    __shared__ float means[MAX_NUM_DIMENSIONS];
+    __shared__ float myR[MAX_NUM_DIMENSIONS*MAX_NUM_DIMENSIONS];
     
     // copy the means for this cluster into shared memory
     if(tid < num_dimensions) {
         means[tid] = clusters->means[c*num_dimensions+tid];
     }
 
-    /* for(int z = tid; z<NUM_DIMENSIONS*NUM_DIMENSIONS; z+=blockDim.x) { */
+    /* for(int z = tid; z<MAX_NUM_DIMENSIONS*MAX_NUM_DIMENSIONS; z+=blockDim.x) { */
     /*   myR[z] = 0.0f; */
     /* } */
-    
-#ifdef SH_MEM_EVENTS
-    __shared__ float events[NUM_EVENTS];
-    
-    for(int event=tid+e_start*num_dimensions; event < e_end*num_dimensions; event+=blockDim.x) {
-      if(event<num_events*num_dimensions) {
-          events[event-e_start*num_dimensions] = fcs_data[event];
-        }
-    }
-#endif    
     
     // Sync to wait for all params to be loaded to shared memory
     __syncthreads();
 
     float cov_sum = 0.0f; //my local sum for the matrix element, I (thread) sum up over all N events into this var
 
-#ifdef SH_MEM_EVENTS
-    //BROKEN DO NOT USE
-    for(int event=0; event < event_block_size*num_dimensions; event++) {
-      cov_sum += (events[row*event_block_size+event]-means[row])*(events[col*event_block_size+event]-means[col])*clusters->memberships[c*event_block_size+event];
-    }
-#endif     
-   
-#ifndef SH_MEM_EVENTS
     for(int event=e_start; event < e_end; event++) {
       cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*clusters->memberships[c*num_events+event];
     }
-    /* for(int event=e_start; event < e_end; event++) { */
-    /*   cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*clusters->memberships[c*num_events+event]; */
-    /* } */
 
     myR[matrix_index] = cov_sum;
-    
-#endif     
-    //__syncthreads();
      
     float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
 
@@ -848,7 +827,7 @@ mstep_covariance_3a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
   int matrix_index;
     
   // Store the means in shared memory to speed up the covariance computations
-  __shared__ float means[NUM_CLUSTERS*NUM_DIMENSIONS];
+  __shared__ float means[MAX_NUM_CLUSTERS*MAX_NUM_DIMENSIONS];
   
   // copy the means for all clusters into shared memory
 
@@ -856,23 +835,11 @@ mstep_covariance_3a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
     means[i] = clusters->means[i];
   }
   
-#ifdef SH_MEM_EVENTS
-    __shared__ float events[NUM_EVENTS];
-    for(int event=tid; event < num_events*num_dimensions; event+=blockDim.x) {
-      if(event<num_events*num_dimensions) {
-        events[event] = fcs_data[event];
-      }
-    }
-#endif    
-     
   // Sync to wait for all params to be loaded to shared memory
   __syncthreads();
 
   __shared__ float temp_sums[NUM_THREADS_MSTEP];
-  __shared__ float cluster_sum[NUM_CLUSTERS]; //local storage for cluster results
-  __shared__ float temp_debug[NUM_THREADS_MSTEP];
-  __shared__ float cluster_debug[NUM_CLUSTERS];
-  
+  __shared__ float cluster_sum[MAX_NUM_CLUSTERS]; //local storage for cluster results
   
   for(int c = 0; c<num_clusters; c++) {
     float cov_sum = 0.0f;
@@ -928,105 +895,6 @@ mstep_covariance_3a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
     }
   } 
 }
-/*
- * Computes the covariance matrices of the data (R matrix)
- * Must be launched with a D*D/2 blocks: 
- */
-__global__ void
-mstep_covariance_3b(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events, int event_block_size, int num_b, float *temp_buffer) {
-
-  int tid = threadIdx.x; // easier variable name for our thread ID
-  
-  // Determine what row,col this matrix is handling, also handles the symmetric element
-  int row,col,c;
-  compute_row_col_block(num_dimensions, &row, &col);
-
-  int e_start, e_end;
-  compute_my_event_indices(num_events, event_block_size, num_b, &e_start, &e_end);
-
-  //__syncthreads();
-      
-  int matrix_index;
-  int num_dim_blocks = num_dimensions*((num_dimensions+1)/2);
-    
-  // Store the means in shared memory to speed up the covariance computations
-  __shared__ float means[NUM_CLUSTERS*NUM_DIMENSIONS];
-  
-  // copy the means for all clusters into shared memory
-  for(int i = tid; i<num_clusters*num_dimensions; i+=NUM_THREADS_MSTEP) {
-    means[i] = clusters->means[i];
-  }
-
-  __shared__ float events[NUM_EVENTS];
-  //could be optimized...
-  for(int dim = tid; dim < num_dimensions; dim+=blockDim.x) {
-    for(int event=e_start; event < e_end; event++) {
-      events[dim*event_block_size+(event-e_start)] = fcs_data[dim*num_events+event];
-    }
-  }
-  
-  // Sync to wait for all params to be loaded to shared memory
-  __syncthreads();
-
-  __shared__ float temp_sums[NUM_THREADS_MSTEP];
-  __shared__ float cluster_sum[NUM_CLUSTERS]; //local storage for cluster results
-  
-  for(int c = 0; c<num_clusters; c++) {
-    float cov_sum = 0.0f;
-
-    for(int event=tid+e_start; event < e_end; event+=NUM_THREADS_MSTEP) {
-      cov_sum += (events[row*event_block_size+(event-e_start)]-means[c*num_dimensions+row])*(events[col*event_block_size+(event-e_start)]-means[c*num_dimensions+col])*clusters->memberships[c*num_events+event];
-    }
-
-    temp_sums[tid] = cov_sum;
-        
-    __syncthreads();
-    
-    if(tid == 0) {
-      cluster_sum[c] = 0.0f; 
-      for(int i=0; i < NUM_THREADS_MSTEP; i++) {
-        cluster_sum[c] += temp_sums[i];
-      }
-    }
-
-    __syncthreads();
-    
-    if(tid==0) {
-      float old = atomicAdd(&(temp_buffer[c*num_dim_blocks+blockIdx.x]), cluster_sum[c]);
-    }
-  }
-
-  __syncthreads();
-
-  
-  //if(blockIdx.y==0) {
-  for(int c = tid; c<num_clusters; c+=NUM_THREADS_MSTEP) {
-    matrix_index =  row * num_dimensions + col;
-    if(clusters->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
-      float cs = temp_buffer[c];
-      cs /= clusters->N[c];
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
-
-      //Set the symmetric value
-      matrix_index = col*num_dimensions+row;
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
-    } else {
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
-      // Set the symmetric value
-      matrix_index = col*num_dimensions+row;
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
-    }
-      
-      
-    // Regularize matrix - adds some variance to the diagonal elements
-    // Helps keep covariance matrix non-singular (so it can be inverted)
-    // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
-    if(row == col) {
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] += clusters->avgvar[c];
-    }
-    //}
-  }
-}
 
 /*
  * Computes the covariance matrices of the data (R matrix)
@@ -1057,7 +925,7 @@ mstep_covariance_transpose(float* fcs_data, clusters_t* clusters, int num_dimens
     #endif 
 
     // Store the means in shared memory to speed up the covariance computations
-    __shared__ float means[NUM_DIMENSIONS];
+    __shared__ float means[MAX_NUM_DIMENSIONS];
     // copy the means for this cluster into shared memory
     if(tid < num_dimensions) {
         means[tid] = clusters->means[c*num_dimensions+tid];

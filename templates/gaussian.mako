@@ -1,12 +1,25 @@
 /*
  * Gaussian Mixture Model Clustering with CUDA
  *
- * Author: Andrew Pangborn
- *
+ * Orginal Author: Andrew Pangborn
  * Department of Computer Engineering
  * Rochester Institute of Technology
  * 
  */
+
+#define PI  3.1415926535897931
+#define COVARIANCE_DYNAMIC_RANGE 1E6
+#define NUM_BLOCKS_ESTEP 16 // Num of blocks per cluster for the E-step
+#define NUM_THREADS_ESTEP 512 // should be a power of 2 
+#define NUM_THREADS_MSTEP 256 // should be a power of 2
+#define NUM_EVENT_BLOCKS 4
+#define MAX_NUM_DIMENSIONS 50
+#define MAX_NUM_CLUSTERS 128
+#define DEVICE 0 // Which GPU to use, if more than 1
+#define DIAG_ONLY 0 // Using only diagonal covariance matrix, thus all dimensions are considered independent
+#define MAX_ITERS 10 // Maximum number of iterations for the EM convergence loop
+#define MIN_ITERS 10 // Minimum number of iterations for the EM convergence loop (normally 0 unless doing performance testing)
+#define ENABLE_VERSION_2B_BUFFER_ALLOC 1
 
 typedef struct return_array_container
 {
@@ -44,12 +57,12 @@ int main (
   int GPUCount;
   CUDA_SAFE_CALL(cudaGetDeviceCount(&GPUCount));
   if(GPUCount == 0) {
-    PRINT("Only 1 CUDA device found, defaulting to it.\n");
+    printf("Only 1 CUDA device found, defaulting to it.\n");
     device = 0;
   } else if (GPUCount >= 1 && device >= 0) {
-    PRINT("Multiple CUDA devices found, selecting device based on user input: %d\n",device);
+    printf("Multiple CUDA devices found, selecting device based on user input: %d\n",device);
   } else if(GPUCount >= 1 && DEVICE < GPUCount) {
-    PRINT("Multiple CUDA devices found, selecting based on compiled default: %d\n",DEVICE);
+    printf("Multiple CUDA devices found, selecting based on compiled default: %d\n",DEVICE);
     device = DEVICE;
   } else {
     printf("Fatal Error: Unable to set device to %d, not enough GPUs.\n",DEVICE);
@@ -98,7 +111,7 @@ int main (
   }
 
   float *temp_buffer_2b = NULL;
-#ifdef CODEVAR_2B
+#if ENABLE_VERSION_2B_BUFFER_ALLOC
   //scratch space to clear out clusters->R
   float *zeroR_2b = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
   for(int i = 0; i<num_dimensions*num_dimensions*original_num_clusters; i++) {
@@ -154,11 +167,9 @@ int main (
   // Allocate a struct on the device 
   clusters_t* d_clusters;
   CUDA_SAFE_CALL(cudaMalloc((void**) &d_clusters, sizeof(clusters_t)));
-  DEBUG("Finished allocating memory on device for clusters.\n");
     
   // Copy Cluster data to device
   CUDA_SAFE_CALL(cudaMemcpy(d_clusters,&temp_clusters,sizeof(clusters_t),cudaMemcpyHostToDevice));
-  DEBUG("Finished copying cluster data to device.\n");
 
   int mem_size = num_dimensions*num_events*sizeof(float);
     
@@ -169,44 +180,33 @@ int main (
   float* d_fcs_data_by_dimension;
   CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_event, mem_size));
   CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_dimension, mem_size));
-  DEBUG("Finished allocating memory on device for clusters.\n");
   // copy FCS to device
   CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_event, fcs_data_by_event, mem_size,cudaMemcpyHostToDevice) );
   CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_dimension, fcs_data_by_dimension, mem_size,cudaMemcpyHostToDevice) );
-  DEBUG("Finished copying FCS data to device.\n");
     
    
   //////////////// Initialization done, starting kernels //////////////// 
-  DEBUG("Invoking seed_clusters kernel...");
   fflush(stdout);
 
   // seed_clusters sets initial pi values, 
   // finds the means / covariances and copies it to all the clusters
   seed_clusters_launch( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);
   cudaThreadSynchronize();
-  DEBUG("done.\n"); 
   CUT_CHECK_ERROR("Seed Kernel execution failed: ");
    
-  DEBUG("Invoking constants kernel...",num_threads);
   // Computes the R matrix inverses, and the gaussian constant
   constants_kernel_launch(d_clusters,original_num_clusters,num_dimensions);
   cudaThreadSynchronize();
   CUT_CHECK_ERROR("Constants Kernel execution failed: ");
-  DEBUG("done.\n");
     
   // Calculate an epsilon value
-  //int ndata_points = num_events*num_dimensions;
   float epsilon = (1+num_dimensions+0.5*(num_dimensions+1)*num_dimensions)*log((float)num_events*num_dimensions)*0.0001;
-  float likelihood, old_likelihood;
   int iters;
-    
-  //epsilon = 1e-6;
-  PRINT("Gaussian.cu: epsilon = %f\n",epsilon);
-
+  float likelihood, old_likelihood;
   // Used to hold the result from regroup kernel
-  float* likelihoods = (float*) malloc(sizeof(float)*NUM_BLOCKS);
+  float* likelihoods = (float*) malloc(sizeof(float)*NUM_BLOCKS_ESTEP);
   float* d_likelihoods;
-  CUDA_SAFE_CALL(cudaMalloc((void**) &d_likelihoods, sizeof(float)*NUM_BLOCKS));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &d_likelihoods, sizeof(float)*NUM_BLOCKS_ESTEP));
     
   // Variables for GMM reduce order
   float distance, min_distance = 0.0;
@@ -225,7 +225,6 @@ int main (
     // (and hence different multiprocessors)
 
   //================================== EM INITIALIZE =======================
-    DEBUG("Invoking regroup (E-step) kernel with %d blocks...",NUM_BLOCKS);
 
     estep1_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods,num_clusters);
     //cudaThreadSynchronize();
@@ -233,14 +232,13 @@ int main (
     estep2_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);
     cudaThreadSynchronize();
 
-    DEBUG("done.\n");
     // check if kernel execution generated an error
     CUT_CHECK_ERROR("Kernel execution failed");
 
     // Copy the likelihood totals from each block, sum them up to get a total
-    CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS,cudaMemcpyDeviceToHost));
+    CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS_ESTEP,cudaMemcpyDeviceToHost));
     likelihood = 0.0;
-    for(int i=0;i<NUM_BLOCKS;i++) {
+    for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
      likelihood += likelihoods[i]; 
     }
     printf("Starter Likelihood: %e\n",likelihood);
@@ -257,7 +255,6 @@ int main (
     while(iters < MIN_ITERS || (iters < MAX_ITERS && fabs(change) > epsilon)) {
       old_likelihood = likelihood;
             
-      DEBUG("Invoking reestimate_parameters (M-step) kernel...",num_threads);
       //params = M step
       // This kernel computes a new N, pi isn't updated until compute_constants though
       mstep_N_launch(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);
@@ -267,7 +264,7 @@ int main (
       mstep_means_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
       cudaThreadSynchronize();
             
-#ifdef CODEVAR_2B
+#if ENABLE_VERSION_2B_BUFFER_ALLOC
       CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_clusters, cudaMemcpyHostToDevice) );
 #endif
       // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per cluster
@@ -275,15 +272,12 @@ int main (
       cudaThreadSynchronize();
                  
       CUT_CHECK_ERROR("M-step Kernel execution failed: ");
-      DEBUG("done.\n");
 
-      DEBUG("Invoking constants kernel...",num_threads);
 
       // Inverts the R matrices, computes the constant, normalizes cluster probabilities
       constants_kernel_launch(d_clusters,num_clusters,num_dimensions);
       cudaThreadSynchronize();
       CUT_CHECK_ERROR("Constants Kernel execution failed: ");
-      DEBUG("done.\n");
 
       //regroup = E step
       // Compute new cluster membership probabilities for all the events
@@ -293,14 +287,13 @@ int main (
       cudaThreadSynchronize();
 
       CUT_CHECK_ERROR("E-step Kernel execution failed: ");
-      DEBUG("done.\n");
         
       // check if kernel execution generated an error
       CUT_CHECK_ERROR("Kernel execution failed");
         
-      CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS,cudaMemcpyDeviceToHost));
+      CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS_ESTEP,cudaMemcpyDeviceToHost));
       likelihood = 0.0;
-      for(int i=0;i<NUM_BLOCKS;i++) {
+      for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
         likelihood += likelihoods[i]; 
       }
             
@@ -480,3 +473,290 @@ void copy_cluster(clusters_t dest, int c_dest, clusters_t src, int c_src, int nu
   memcpy(&(dest.Rinv[c_dest*num_dimensions*num_dimensions]),&(src.Rinv[c_src*num_dimensions*num_dimensions]),sizeof(float)*num_dimensions*num_dimensions);
   // do we need to copy memberships?
 }
+
+static float double_abs(float x);
+
+static int 
+ludcmp(float *a,int n,int *indx,float *d);
+
+static void 
+lubksb(float *a,int n,int *indx,float *b);
+
+/*
+ * Inverts a square matrix (stored as a 1D float array)
+ * 
+ * actualsize - the dimension of the matrix
+ *
+ * written by Mike Dinolfo 12/98
+ * version 1.0
+ */
+void invert_cpu(float* data, int actualsize, float* log_determinant)  {
+    int maxsize = actualsize;
+    int n = actualsize;
+    *log_determinant = 0.0;
+
+    if (actualsize == 1) { // special case, dimensionality == 1
+        *log_determinant = logf(data[0]);
+        data[0] = 1.0 / data[0];
+    } else if(actualsize >= 2) { // dimensionality >= 2
+        for (int i=1; i < actualsize; i++) data[i] /= data[0]; // normalize row 0
+        for (int i=1; i < actualsize; i++)  { 
+            for (int j=i; j < actualsize; j++)  { // do a column of L
+                float sum = 0.0;
+                for (int k = 0; k < i; k++)  
+                    sum += data[j*maxsize+k] * data[k*maxsize+i];
+                data[j*maxsize+i] -= sum;
+            }
+            if (i == actualsize-1) continue;
+            for (int j=i+1; j < actualsize; j++)  {  // do a row of U
+                float sum = 0.0;
+                for (int k = 0; k < i; k++)
+                    sum += data[i*maxsize+k]*data[k*maxsize+j];
+                data[i*maxsize+j] = 
+                    (data[i*maxsize+j]-sum) / data[i*maxsize+i];
+            }
+        }
+
+        for(int i=0; i<actualsize; i++) {
+            *log_determinant += log10(fabs(data[i*n+i]));
+            //printf("log_determinant: %e\n",*log_determinant); 
+        }
+        //printf("\n\n");
+        for ( int i = 0; i < actualsize; i++ )  // invert L
+            for ( int j = i; j < actualsize; j++ )  {
+                float x = 1.0;
+                if ( i != j ) {
+                    x = 0.0;
+                    for ( int k = i; k < j; k++ ) 
+                        x -= data[j*maxsize+k]*data[k*maxsize+i];
+                }
+                data[j*maxsize+i] = x / data[j*maxsize+j];
+            }
+        for ( int i = 0; i < actualsize; i++ )   // invert U
+            for ( int j = i; j < actualsize; j++ )  {
+                if ( i == j ) continue;
+                float sum = 0.0;
+                for ( int k = i; k < j; k++ )
+                    sum += data[k*maxsize+j]*( (i==k) ? 1.0 : data[i*maxsize+k] );
+                data[i*maxsize+j] = -sum;
+            }
+        for ( int i = 0; i < actualsize; i++ )   // final inversion
+            for ( int j = 0; j < actualsize; j++ )  {
+                float sum = 0.0;
+                for ( int k = ((i>j)?i:j); k < actualsize; k++ )  
+                    sum += ((j==k)?1.0:data[j*maxsize+k])*data[k*maxsize+i];
+                data[j*maxsize+i] = sum;
+            }
+    } else {
+        printf("Error: Invalid dimensionality for invert(...)\n");
+    }
+ }
+
+
+/*
+ * Another matrix inversion function
+ * This was modified from the 'cluster' application by Charles A. Bouman
+ */
+int invert_matrix(float* a, int n, float* determinant) {
+    int  i,j,f,g;
+   
+    float* y = (float*) malloc(sizeof(float)*n*n);
+    float* col = (float*) malloc(sizeof(float)*n);
+    int* indx = (int*) malloc(sizeof(int)*n);
+
+    printf("\n\nR matrix before LU decomposition:\n");
+    for(i=0; i<n; i++) {
+        for(j=0; j<n; j++) {
+            printf("%.2f ",a[i*n+j]);
+        }
+        printf("\n");
+    }
+
+    *determinant = 0.0;
+    if(ludcmp(a,n,indx,determinant)) {
+        printf("Determinant mantissa after LU decomposition: %f\n",*determinant);
+        printf("\n\nR matrix after LU decomposition:\n");
+        for(i=0; i<n; i++) {
+            for(j=0; j<n; j++) {
+                printf("%.2f ",a[i*n+j]);
+            }
+            printf("\n");
+        }
+       
+      for(j=0; j<n; j++) {
+        *determinant *= a[j*n+j];
+      }
+     
+      printf("determinant: %E\n",*determinant);
+     
+      for(j=0; j<n; j++) {
+        for(i=0; i<n; i++) col[i]=0.0;
+        col[j]=1.0;
+        lubksb(a,n,indx,col);
+        for(i=0; i<n; i++) y[i*n+j]=col[i];
+      }
+
+      for(i=0; i<n; i++)
+      for(j=0; j<n; j++) a[i*n+j]=y[i*n+j];
+     
+      printf("\n\nMatrix at end of clust_invert function:\n");
+      for(f=0; f<n; f++) {
+          for(g=0; g<n; g++) {
+              printf("%.2f ",a[f*n+g]);
+          }
+          printf("\n");
+      }
+      free(y);
+      free(col);
+      free(indx);
+      return(1);
+    }
+    else {
+        *determinant = 0.0;
+        free(y);
+        free(col);
+        free(indx);
+        return(0);
+    }
+}
+
+static float double_abs(float x)
+{
+       if(x<0) x = -x;
+       return(x);
+}
+
+#define TINY 1.0e-20
+
+static int
+ludcmp(float *a,int n,int *indx,float *d)
+{
+    int i,imax,j,k;
+    float big,dum,sum,temp;
+    float *vv;
+
+    vv= (float*) malloc(sizeof(float)*n);
+   
+    *d=1.0;
+   
+    for (i=0;i<n;i++)
+    {
+        big=0.0;
+        for (j=0;j<n;j++)
+            if ((temp=fabsf(a[i*n+j])) > big)
+                big=temp;
+        if (big == 0.0)
+            return 0; /* Singular matrix  */
+        vv[i]=1.0/big;
+    }
+       
+   
+    for (j=0;j<n;j++)
+    {  
+        for (i=0;i<j;i++)
+        {
+            sum=a[i*n+j];
+            for (k=0;k<i;k++)
+                sum -= a[i*n+k]*a[k*n+j];
+            a[i*n+j]=sum;
+        }
+       
+        /*
+        int f,g;
+        printf("\n\nMatrix After Step 1:\n");
+        for(f=0; f<n; f++) {
+            for(g=0; g<n; g++) {
+                printf("%.2f ",a[f*n+g]);
+            }
+            printf("\n");
+        }*/
+       
+        big=0.0;
+        dum=0.0;
+        for (i=j;i<n;i++)
+        {
+            sum=a[i*n+j];
+            for (k=0;k<j;k++)
+                sum -= a[i*n+k]*a[k*n+j];
+            a[i*n+j]=sum;
+            dum=vv[i]*fabsf(sum);
+            //printf("sum: %f, dum: %f, big: %f\n",sum,dum,big);
+            //printf("dum-big: %E\n",fabs(dum-big));
+            if ( (dum-big) >= 0.0 || fabs(dum-big) < 1e-3)
+            {
+                big=dum;
+                imax=i;
+                //printf("imax: %d\n",imax);
+            }
+        }
+       
+        if (j != imax)
+        {
+            for (k=0;k<n;k++)
+            {
+                dum=a[imax*n+k];
+                a[imax*n+k]=a[j*n+k];
+                a[j*n+k]=dum;
+            }
+            *d = -(*d);
+            vv[imax]=vv[j];
+        }
+        indx[j]=imax;
+       
+        /*
+        printf("\n\nMatrix after %dth iteration of LU decomposition:\n",j);
+        for(f=0; f<n; f++) {
+            for(g=0; g<n; g++) {
+                printf("%.2f ",a[f][g]);
+            }
+            printf("\n");
+        }
+        printf("imax: %d\n",imax);
+        */
+
+
+        /* Change made 3/27/98 for robustness */
+        if ( (a[j*n+j]>=0)&&(a[j*n+j]<TINY) ) a[j*n+j]= TINY;
+        if ( (a[j*n+j]<0)&&(a[j*n+j]>-TINY) ) a[j*n+j]= -TINY;
+
+        if (j != n-1)
+        {
+            dum=1.0/(a[j*n+j]);
+            for (i=j+1;i<n;i++)
+                a[i*n+j] *= dum;
+        }
+    }
+    free(vv);
+    return(1);
+}
+
+#undef TINY
+
+static void
+lubksb(float *a,int n,int *indx,float *b)
+{
+    int i,ii,ip,j;
+    float sum;
+
+    ii = -1;
+    for (i=0;i<n;i++)
+    {
+        ip=indx[i];
+        sum=b[ip];
+        b[ip]=b[i];
+        if (ii >= 0)
+            for (j=ii;j<i;j++)
+                sum -= a[i*n+j]*b[j];
+        else if (sum)
+            ii=i;
+        b[i]=sum;
+    }
+    for (i=n-1;i>=0;i--)
+    {
+        sum=b[i];
+        for (j=i+1;j<n;j++)
+            sum -= a[i*n+j]*b[j];
+        b[i]=sum/a[i*n+i];
+    }
+}
+
