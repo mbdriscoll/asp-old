@@ -819,7 +819,7 @@ mstep_covariance_3a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
   int tid = threadIdx.x; // easier variable name for our thread ID
   
   // Determine what row,col this matrix is handling, also handles the symmetric element
-  int row,col,c;
+  int row,col;
   compute_row_col_block(num_dimensions, &row, &col);
 
   //__syncthreads();
@@ -988,6 +988,64 @@ constants_kernel(clusters_t* clusters, int num_clusters, int num_dimensions) {
     if(blockIdx.x == 0) {
         normalize_pi(clusters,num_clusters);
     }
+}
+
+void seed_clusters_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int original_num_clusters, int num_events)
+{
+  seed_clusters<<< 1, NUM_THREADS_MSTEP >>>( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);
+}
+
+void constants_kernel_launch(clusters_t* d_clusters, int original_num_clusters, int num_dimensions)
+{
+  constants_kernel<<<original_num_clusters, 64>>>(d_clusters,original_num_clusters,num_dimensions);
+}
+
+void estep1_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters)
+{
+  estep1<<<dim3(NUM_BLOCKS_ESTEP,num_clusters), NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods);
+}
+
+void estep2_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods)
+{
+  estep2<<<NUM_BLOCKS_ESTEP, NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);
+}
+
+void mstep_N_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events)
+{
+  mstep_N<<<num_clusters, NUM_THREADS_MSTEP>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);
+}
+
+void mstep_means_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events)
+{
+  dim3 gridDim1(num_clusters,num_dimensions);
+  mstep_means<<<gridDim1, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
+}
+
+void mstep_covar_launch_CODEVAR_1A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+{
+  dim3 gridDim2(num_clusters,num_dimensions*(num_dimensions+1)/2);
+  mstep_covariance<<<gridDim2, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
+}
+
+void mstep_covar_launch_CODEVAR_2A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+{
+  int num_threads = num_dimensions*(num_dimensions+1)/2;
+  mstep_covariance_2a<<<num_clusters, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);
+}
+
+void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+{
+  int num_event_blocks = NUM_EVENT_BLOCKS;
+  int event_block_size = num_events%NUM_EVENT_BLOCKS == 0 ? num_events/NUM_EVENT_BLOCKS:num_events/(NUM_EVENT_BLOCKS-1);
+  dim3 gridDim2(num_clusters,num_event_blocks);
+  int num_threads = num_dimensions*(num_dimensions+1)/2;
+  mstep_covariance_2b<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events, event_block_size, num_event_blocks, temp_buffer_2b);
+}
+
+void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+{
+  int num_blocks = num_dimensions*(num_dimensions+1)/2;
+  mstep_covariance_3a<<<num_blocks, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
 }
 
 #endif // #ifndef _TEMPLATE_KERNEL_H_

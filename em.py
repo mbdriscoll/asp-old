@@ -53,21 +53,34 @@ class GMM(object):
             min_iters = 10,
             )
 
-        cluster_t_decl = """typedef struct 
-        {
-            // Key for array lengths
-            //  N = number of events
-            //  M = number of clusters
-            //  D = number of dimensions
-            float* N;        // expected # of pixels in cluster: [M]
-            float* pi;       // probability of cluster in GMM: [M]
-            float* constant; // Normalizing constant [M]
-            float* avgvar;    // average variance [M]
-            float* means;   // Spectral mean for the cluster: [M*D]
-            float* R;      // Covariance matrix: [M*D*D]
-            float* Rinv;   // Inverse of covariance matrix: [M*D*D]
-            float* memberships; // Fuzzy memberships: [N*M]
-        } clusters_t;"""
+        cluster_t_decl =""" 
+            typedef struct 
+            {
+                // Key for array lengths
+                //  N = number of events
+                //  M = number of clusters
+                //  D = number of dimensions
+                float* N;        // expected # of pixels in cluster: [M]
+                float* pi;       // probability of cluster in GMM: [M]
+                float* constant; // Normalizing constant [M]
+                float* avgvar;    // average variance [M]
+                float* means;   // Spectral mean for the cluster: [M*D]
+                float* R;      // Covariance matrix: [M*D*D]
+                float* Rinv;   // Inverse of covariance matrix: [M*D*D]
+                float* memberships; // Fuzzy memberships: [N*M]
+            } clusters_t;"""
+        cuda_launch_decls ="""
+            void seed_clusters_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int original_num_clusters, int num_events);
+            void constants_kernel_launch(clusters_t* d_clusters, int original_num_clusters, int num_dimensions);
+            void estep1_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters);
+            void estep2_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods);
+            void mstep_N_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events);
+            void mstep_means_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events);
+            void mstep_covar_launch_CODEVAR_1A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            void mstep_covar_launch_CODEVAR_2A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            """
 
         # Create host-side module
 
@@ -83,6 +96,7 @@ class GMM(object):
         for x in host_system_header_names: self.aspmod.add_to_preamble([Include(x, True)])
         for x in host_project_header_names: self.aspmod.add_to_preamble([Include(x, False)])
         self.aspmod.add_to_preamble([Line(cluster_t_decl)])
+        self.aspmod.add_to_preamble([Line(cuda_launch_decls)])
         self.aspmod.add_function(c_main_rend, fname="train")
         #aspmod.module.mod_body.append(Line(open('invert_matrix.cpp', 'r').read()))
 
@@ -92,96 +106,6 @@ class GMM(object):
         cuda_mod.add_to_preamble([Include('stdio.h',True)])
         cuda_mod.add_to_preamble([Line(cluster_t_decl)])
         cuda_mod.add_to_module([Line(cu_kern_rend)])
-
-        seed_clusters_statements = [ 'seed_clusters<<< 1, NUM_THREADS_MSTEP >>>( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);' ]
-        constants_kernel_statements = [ 'constants_kernel<<<original_num_clusters, 64>>>(d_clusters,original_num_clusters,num_dimensions);' ]
-        estep1_statements = [ 'estep1<<<dim3(NUM_BLOCKS_ESTEP,num_clusters), NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods);' ]
-        estep2_statements = [ 'estep2<<<NUM_BLOCKS_ESTEP, NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);' ]
-        mstep_N_statements = [ 'mstep_N<<<num_clusters, NUM_THREADS_MSTEP>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);' ]
-        mstep_means_statements = ['dim3 gridDim1(num_clusters,num_dimensions);',
-              'mstep_means<<<gridDim1, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ]
-        mstep_covar_launch_versions = {
-            'CODEVAR_1A':  [ 'dim3 gridDim2(num_clusters,num_dimensions*(num_dimensions+1)/2);',
-                    'mstep_covariance<<<gridDim2, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ],
-            'CODEVAR_2A': [ 'int num_blocks = num_clusters;',
-                    'int num_threads = num_dimensions*(num_dimensions+1)/2;',
-                    'mstep_covariance_2a<<<num_clusters, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);' ],
-            'CODEVAR_2B': [ 'int num_event_blocks = NUM_EVENT_BLOCKS;',
-                    'int event_block_size = num_events%NUM_EVENT_BLOCKS == 0 ? num_events/NUM_EVENT_BLOCKS:num_events/(NUM_EVENT_BLOCKS-1);',
-                    'dim3 gridDim2(num_clusters,num_event_blocks);',
-                    'int num_threads = num_dimensions*(num_dimensions+1)/2;',
-                    'mstep_covariance_2b<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events, event_block_size, num_event_blocks, temp_buffer_2b);' ],
-            'CODEVAR_3A': [ 'int num_blocks = num_dimensions*(num_dimensions+1)/2;',
-                    'mstep_covariance_3a<<<num_blocks, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);' ] }
-
-        seed_clusters_launch_func = FunctionBody(  
-                        FunctionDeclaration(Value('void', 'seed_clusters_launch'),
-                                        [   Value('float*', 'd_fcs_data_by_event'), 
-                                            Value('clusters_t*', 'd_clusters'), 
-                                            Value('int', 'num_dimensions'), 
-                                            Value('int', 'original_num_clusters'), 
-                                            Value('int', 'num_events')  ]),
-                        Block([Statement(s) for s in seed_clusters_statements]) )
-        constants_kernel_launch_func = FunctionBody(  
-                        FunctionDeclaration(Value('void', 'constants_kernel_launch'),
-                                        [   Value('clusters_t*', 'd_clusters'), 
-                                            Value('int', 'original_num_clusters'), 
-                                            Value('int', 'num_dimensions') ]),
-                        Block([Statement(s) for s in constants_kernel_statements]) )
-        estep1_launch_func = FunctionBody(
-                        FunctionDeclaration(Value('void', 'estep1_launch'),
-                                        [   Value('float*', 'd_fcs_data_by_dimension'), 
-                                            Value('clusters_t*', 'd_clusters'), 
-                                            Value('int', 'num_dimensions'), 
-                                            Value('int', 'num_events'),
-                                            Value('float*', 'd_likelihoods'),
-                                            Value('int', 'num_clusters') ]),
-                        Block([Statement(s) for s in estep1_statements]) )
-        estep2_launch_func = FunctionBody(
-                        FunctionDeclaration(Value('void', 'estep2_launch'),
-                                        [   Value('float*', 'd_fcs_data_by_dimension'), 
-                                            Value('clusters_t*', 'd_clusters'), 
-                                            Value('int', 'num_dimensions'), 
-                                            Value('int', 'num_clusters'),
-                                            Value('int', 'num_events'),
-                                            Value('float*', 'd_likelihoods') ]),
-                        Block([Statement(s) for s in estep2_statements]) )
-        mstep_N_launch_func = FunctionBody(
-                        FunctionDeclaration(Value('void', 'mstep_N_launch'),
-                                        [   Value('float*', 'd_fcs_data_by_event'), 
-                                            Value('clusters_t*', 'd_clusters'), 
-                                            Value('int', 'num_dimensions'), 
-                                            Value('int', 'num_clusters'),
-                                            Value('int', 'num_events') ]),
-                        Block([Statement(s) for s in mstep_N_statements]) )
-        mstep_means_launch_func = FunctionBody(
-                        FunctionDeclaration(Value('void', 'mstep_means_launch'),
-                                        [   Value('float*', 'd_fcs_data_by_dimension'), 
-                                            Value('clusters_t*', 'd_clusters'), 
-                                            Value('int', 'num_dimensions'), 
-                                            Value('int', 'num_clusters'),
-                                            Value('int', 'num_events') ]),
-                        Block([Statement(s) for s in mstep_means_statements]) )
-        mstep_covar_launch_funcs = [ FunctionBody(
-                        FunctionDeclaration(Value('void', 'mstep_covar_launch_' + v),
-                                        [   Value('float*', 'd_fcs_data_by_dimension'), 
-                                            Value('float*', 'd_fcs_data_by_event'), 
-                                            Value('clusters_t*', 'd_clusters'), 
-                                            Value('int', 'num_dimensions'), 
-                                            Value('int', 'num_clusters'),
-                                            Value('int', 'num_events'),
-                                            Value('float*', 'temp_buffer_2b') ]),
-                        Block([Statement(s) for s in mstep_covar_launch_versions[v]]) ) for v in version_suffix_list ]
-
-        for x in [  seed_clusters_launch_func, 
-                    constants_kernel_launch_func, 
-                    estep1_launch_func, 
-                    estep2_launch_func, 
-                    mstep_N_launch_func, 
-                    mstep_means_launch_func ]:
-            cuda_mod.add_function(x) 
-        for x in mstep_covar_launch_funcs:
-            cuda_mod.add_function(x)
 
         # Setup toolchain and compile
 
