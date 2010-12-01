@@ -39,11 +39,7 @@ void add_clusters(clusters_t clusters, int c1, int c2, clusters_t temp_cluster, 
 void invert_cpu(float* data, int actualsize, float* log_determinant);
 int invert_matrix(float* a, int n, float* determinant);
 
-////////////////////////////////////////////////////////////////////////////////
-// Program main
-////////////////////////////////////////////////////////////////////////////////
-
-int main (
+int train (
         int device,
         int num_clusters, 
         int num_dimensions, 
@@ -58,22 +54,22 @@ int main (
   int GPUCount;
   CUDA_SAFE_CALL(cudaGetDeviceCount(&GPUCount));
   if(GPUCount == 0) {
-    printf("Only 1 CUDA device found, defaulting to it.\n");
+    //printf("Only 1 CUDA device found, defaulting to it.\n");
     device = 0;
   } else if (GPUCount >= 1 && device >= 0) {
-    printf("Multiple CUDA devices found, selecting device based on user input: %d\n",device);
+    //printf("Multiple CUDA devices found, selecting device based on user input: %d\n",device);
   } else if(GPUCount >= 1 && DEVICE < GPUCount) {
-    printf("Multiple CUDA devices found, selecting based on compiled default: %d\n",DEVICE);
+    //printf("Multiple CUDA devices found, selecting based on compiled default: %d\n",DEVICE);
     device = DEVICE;
   } else {
-    printf("Fatal Error: Unable to set device to %d, not enough GPUs.\n",DEVICE);
+    //printf("Fatal Error: Unable to set device to %d, not enough GPUs.\n",DEVICE);
     exit(2);
   }
   CUDA_SAFE_CALL(cudaSetDevice(device));
     
   cudaDeviceProp prop;
   cudaGetDeviceProperties(&prop, device);
-  printf("\nUsing device - %s\n\n", prop.name);
+  //printf("\nUsing device - %s\n\n", prop.name);
     
   // Transpose the event data (allows coalesced access pattern in E-step kernel)
   // This has consecutive values being from the same dimension of the data 
@@ -84,8 +80,8 @@ int main (
     return 1;
   }
     
-  printf("Number of events: %d\n",num_events);
-  printf("Number of dimensions: %d\n",num_dimensions);
+  //printf("Number of events: %d\n",num_events);
+  //printf("Number of dimensions: %d\n",num_dimensions);
 
   for(int e=0; e<num_events; e++) {
     for(int d=0; d<num_dimensions; d++) {
@@ -93,7 +89,7 @@ int main (
     }
   }    
 
-  printf("Number of clusters: %d\n\n",num_clusters);
+  //printf("Number of clusters: %d\n\n",num_clusters);
     
    
   // Setup the cluster data structures on host
@@ -242,12 +238,12 @@ int main (
     for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
      likelihood += likelihoods[i]; 
     }
-    printf("Starter Likelihood: %e\n",likelihood);
+    //printf("Starter Likelihood: %e\n",likelihood);
 
     float change = epsilon*2;
 
     //================================= EM BEGIN ==================================
-    printf("Performing EM algorithm on %d clusters.\n",num_clusters);
+    //printf("Performing EM algorithm on %d clusters.\n",num_clusters);
     iters = 0;
 
     // This is the iterative loop for the EM algorithm.
@@ -299,8 +295,8 @@ int main (
       }
             
       change = likelihood - old_likelihood;
-      printf("Iter %d likelihood = %f\n", iters, likelihood);
-      printf("Change in likelihood: %f (vs. %f)\n",change, epsilon);
+      //printf("Iter %d likelihood = %f\n", iters, likelihood);
+      //printf("Change in likelihood: %f (vs. %f)\n",change, epsilon);
 
       iters++;
 
@@ -327,7 +323,7 @@ int main (
 
   //================================ EM DONE ==============================
   //printf("\nFinal rissanen Score was: %f, with %d clusters.\n",min_rissanen,num_clusters);
-  printf("DONE COMPUTING\n");
+  //printf("DONE COMPUTING\n");
  
   // cleanup host memory
   //free(fcs_data_by_event); NOW OWNED BY PYTHON!
@@ -564,14 +560,14 @@ int invert_matrix(float* a, int n, float* determinant) {
     float* y = (float*) malloc(sizeof(float)*n*n);
     float* col = (float*) malloc(sizeof(float)*n);
     int* indx = (int*) malloc(sizeof(int)*n);
-
+    /*
     printf("\n\nR matrix before LU decomposition:\n");
     for(i=0; i<n; i++) {
         for(j=0; j<n; j++) {
             printf("%.2f ",a[i*n+j]);
         }
         printf("\n");
-    }
+    }*/
 
     *determinant = 0.0;
     if(ludcmp(a,n,indx,determinant)) {

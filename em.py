@@ -97,7 +97,7 @@ class EM(object):
         for x in host_system_header_names: aspmod.add_to_preamble([Include(x, True)])
         for x in host_project_header_names: aspmod.add_to_preamble([Include(x, False)])
         aspmod.add_to_preamble([Line(cluster_t_decl)])
-        aspmod.add_function(c_main_rend, fname="main")
+        aspmod.add_function(c_main_rend, fname="train")
         #aspmod.module.mod_body.append(Line(open('invert_matrix.cpp', 'r').read()))
 
         # Create cuda-device module
@@ -215,7 +215,7 @@ class EM(object):
         aspmod.compile()
 
         #main( int device, int original_num_clusters, int num_dimensions, int num_events, pyublas::numpy_array<float> input_data )
-        aspmod.main( 0, self.M, self.D, self.N, self.X)
+        aspmod.train( 0, self.M, self.D, self.N, self.X)
         means = aspmod.compiled_module.trained.means.reshape((self.M, self.D))
         covars = aspmod.compiled_module.trained.covars.reshape((self.M, self.D, self.D))
 
