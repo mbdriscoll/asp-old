@@ -11,25 +11,25 @@ from em import *
 class BasicTests(unittest.TestCase):
     def setUp(self):
         self.version_in = '1'
-        self.N = 600
-        self.D = 2
+        N = 600
         self.M = 2
         np.random.seed(0)
         C = np.array([[0., -0.7], [3.5, .7]])
         Y = np.r_[
-            np.dot(np.random.randn(self.N/2, 2), C),
-            np.random.randn(self.N/2, 2) + np.array([3, 3]),
+            np.dot(np.random.randn(N/2, 2), C),
+            np.random.randn(N/2, 2) + np.array([3, 3]),
             ]
         self.X = np.array(Y, dtype=np.float32)
+        self.gmm = GMM(self.M, self.version_in)
 
     def tearDown(self):
-        self.plot(self.means, self.covars, self.X, "P")
+        self.plot(self.means, self.covars, self.X, "")
 
     def test_pure_python(self):
-        self.means, self.covars = EM(self.X, self.N, self.M, self.D).train_using_python()
+        self.means, self.covars = self.gmm.train_using_python(self.X)
 
     def test_generated(self):        
-        self.means, self.covars = EM(self.X, self.N, self.M, self.D).train_using_asp(self.version_in)
+        self.means, self.covars = self.gmm.train(self.X)
 
     def plot(self, means, covars, X, name):
         splot = pl.subplot(111, aspect='equal', title=name)
