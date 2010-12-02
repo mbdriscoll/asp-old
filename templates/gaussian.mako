@@ -24,20 +24,40 @@
 
 typedef struct return_array_container
 {
+  pyublas::numpy_array<float> N_p;
+  pyublas::numpy_array<float> pi;
+  pyublas::numpy_array<float> constant;     
+  pyublas::numpy_array<float> avgvar;      
   pyublas::numpy_array<float> means;
-  pyublas::numpy_array<float> covars;
+  pyublas::numpy_array<float> R;
+  pyublas::numpy_array<float> Rinv;
 } ret_arr_con_t;
 
 ret_arr_con_t ret;
 
 clusters_t clusters;
 
+//AHC functions
+//int merge_2_closest_clusters(int num_clusters, int num_dimensions, int num_events, clusters_t *clusters);
+int merge_2_closest_clusters(int num_clusters,   
+                             int num_dimensions,
+                             int num_events,           
+                             pyublas::numpy_array<float> N,
+                             pyublas::numpy_array<float> pi,
+                             pyublas::numpy_array<float> constant,
+                             pyublas::numpy_array<float> avgvar,
+                             pyublas::numpy_array<float> means,
+                             pyublas::numpy_array<float> R,
+                             pyublas::numpy_array<float> Rinv
+                             );
+void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int num_dimensions);
+void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
+float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
+//end AHC functions
+
 // Function prototypes
 void writeCluster(FILE* f, clusters_t clusters, int c,  int num_dimensions);
 void printCluster(clusters_t clusters, int c, int num_dimensions);
-float cluster_distance(clusters_t clusters, int c1, int c2, clusters_t temp_cluster, int num_dimensions);
-void copy_cluster(clusters_t dest, int c_dest, clusters_t src, int c_src, int num_dimensions);
-void add_clusters(clusters_t clusters, int c1, int c2, clusters_t temp_cluster, int num_dimensions);
 void invert_cpu(float* data, int actualsize, float* log_determinant);
 int invert_matrix(float* a, int n, float* determinant);
 
@@ -95,6 +115,7 @@ int train (
     
    
   // Setup the cluster data structures on host
+  clusters_t clusters;
   clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
   clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
   clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
@@ -134,20 +155,6 @@ int train (
     return 1; 
   }
 
-  // Setup the cluster data structures on host
-  clusters_t scratch_clusters;
-  scratch_clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
-  scratch_clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
-  scratch_clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
-  scratch_clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters);
-  scratch_clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);
-  scratch_clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  scratch_clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  scratch_clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
-  if(!scratch_clusters.means || !scratch_clusters.R || !scratch_clusters.Rinv || !scratch_clusters.memberships) { 
-    printf("ERROR: Could not allocate memory for scratch_clusters.\n"); 
-    return 1; 
-  }
   
   // Setup the cluster data structures on device
   // First allocate structures on the host, CUDA malloc the arrays
@@ -317,10 +324,27 @@ int train (
         
     //} // outer loop from M to 1 clusters
 
+  ret.N_p = pyublas::numpy_array<float>(num_clusters);       
+  std::copy( clusters.N, clusters.N+num_clusters, ret.N_p.begin());
+
+  ret.pi = pyublas::numpy_array<float>(num_clusters);       
+  std::copy( clusters.pi, clusters.pi+num_clusters, ret.pi.begin());
+
+  ret.constant = pyublas::numpy_array<float>(num_clusters);       
+  std::copy( clusters.constant, clusters.constant+num_clusters, ret.constant.begin());
+
+  ret.avgvar = pyublas::numpy_array<float>(num_clusters);       
+  std::copy( clusters.avgvar, clusters.avgvar+num_clusters, ret.avgvar.begin());
+
   ret.means = pyublas::numpy_array<float>(num_dimensions*num_clusters);
   std::copy( clusters.means, clusters.means+num_dimensions*num_clusters, ret.means.begin());
-  ret.covars = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);
-  std::copy( clusters.R, clusters.R+num_dimensions*num_dimensions*num_clusters, ret.covars.begin());
+
+  ret.R = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);
+  std::copy( clusters.R, clusters.R+num_dimensions*num_dimensions*num_clusters, ret.R.begin());
+
+  ret.Rinv = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);    
+  std::copy( clusters.Rinv, clusters.Rinv+num_dimensions*num_dimensions*num_clusters, ret.Rinv.begin());
+
 
   //================================ EM DONE ==============================
   //printf("\nFinal rissanen Score was: %f, with %d clusters.\n",min_rissanen,num_clusters);
@@ -329,14 +353,14 @@ int train (
   // cleanup host memory
   //free(fcs_data_by_event); NOW OWNED BY PYTHON!
   free(fcs_data_by_dimension);
-  //free(clusters.N);
-  //free(clusters.pi);
-  //free(clusters.constant);
-  //free(clusters.avgvar);
-  //free(clusters.means);
-  //free(clusters.R);
-  //free(clusters.Rinv);
-  //free(clusters.memberships);
+  // free(clusters.N);
+  // free(clusters.pi);
+  // free(clusters.constant);
+  // free(clusters.avgvar);
+  // free(clusters.means);
+  // free(clusters.R);
+  // free(clusters.Rinv);
+  // free(clusters.memberships);
 
   free(saved_clusters.N);
   free(saved_clusters.pi);
@@ -347,15 +371,6 @@ int train (
   free(saved_clusters.Rinv);
   free(saved_clusters.memberships);
     
-  free(scratch_clusters.N);
-  free(scratch_clusters.pi);
-  free(scratch_clusters.constant);
-  free(scratch_clusters.avgvar);
-  free(scratch_clusters.means);
-  free(scratch_clusters.R);
-  free(scratch_clusters.Rinv);
-  free(scratch_clusters.memberships);
-   
   free(likelihoods);
 
   // cleanup GPU memory
@@ -376,6 +391,197 @@ int train (
 
   return 0;
 }
+
+
+//------------------------- AHC FUNCTIONS ----------------------------
+//int merge_2_closest_clusters(int num_clusters, int num_dimensions, int num_events, clusters_t *clusters) {
+int merge_2_closest_clusters(int num_clusters,   
+                             int num_dimensions,
+                             int num_events,           
+                             pyublas::numpy_array<float> N,
+                             pyublas::numpy_array<float> pi,
+                             pyublas::numpy_array<float> constant,
+                             pyublas::numpy_array<float> avgvar,
+                             pyublas::numpy_array<float> means,
+                             pyublas::numpy_array<float> R,
+                             pyublas::numpy_array<float> Rinv
+                             ) { 
+
+  clusters_t clusters;
+  clusters.N = N.data();
+  clusters.pi =  pi.data();
+  clusters.constant = constant.data();
+  clusters.avgvar = avgvar.data();
+  clusters.means = means.data();
+  clusters.R = R.data();
+  clusters.Rinv = Rinv.data();
+  
+  int min_c1, min_c2;
+  float distance, min_distance = 0.0;
+  int ret_num_clusters = num_clusters;
+
+  // Used as a temporary cluster for combining clusters in "distance" computations
+  clusters_t scratch_cluster;
+  scratch_cluster.N = (float*) malloc(sizeof(float));
+  scratch_cluster.pi = (float*) malloc(sizeof(float));
+  scratch_cluster.constant = (float*) malloc(sizeof(float));
+  scratch_cluster.avgvar = (float*) malloc(sizeof(float));
+  scratch_cluster.means = (float*) malloc(sizeof(float)*num_dimensions);
+  scratch_cluster.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
+  scratch_cluster.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
+  scratch_cluster.memberships = (float*) malloc(sizeof(float)*num_events);
+
+  
+  // First eliminate any "empty" clusters 
+  for(int i=ret_num_clusters-1; i >= 0; i--) {
+    if(clusters.N[i] < 1.0) {
+      //DEBUG("Cluster #%d has less than 1 data point in it.\n",i);
+      for(int j=i; j < ret_num_clusters-1; j++) {
+        copy_cluster(&clusters,j,&clusters,j+1,num_dimensions);
+      }
+      ret_num_clusters--;
+    }
+  }
+            
+  min_c1 = 0;
+  min_c2 = 1;
+
+  // For all combinations of subclasses...
+  // If the number of clusters got really big might need to do a non-exhaustive search
+  // Even with 100*99/2 combinations this doesn't seem to take too long
+  for(int c1=0; c1<ret_num_clusters;c1++) {
+    for(int c2=c1+1; c2<ret_num_clusters;c2++) {
+      // compute distance function between the 2 clusters
+      distance = cluster_distance(&clusters,c1,c2,&scratch_cluster,num_dimensions);
+                    
+      // Keep track of minimum distance
+      if((c1 ==0 && c2 == 1) || distance < min_distance) {
+        min_distance = distance;
+        min_c1 = c1;
+        min_c2 = c2;
+      }
+    }
+  }
+
+  //printf("\nMinimum distance between (%d,%d). Combining clusters\n",min_c1,min_c2);
+  // Add the two clusters with min distance together
+  add_clusters(&clusters,min_c1,min_c2,&scratch_cluster,num_dimensions);
+
+  // Copy new combined cluster into the main group of clusters, compact them
+  copy_cluster(&clusters,min_c1,&scratch_cluster,0,num_dimensions);
+
+  for(int i=min_c2; i < num_clusters-1; i++) {
+  
+    copy_cluster(&clusters,i,&clusters,i+1,num_dimensions);
+  }
+
+  // clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
+  // clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
+  // clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
+  // clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters);
+  // clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);
+  // clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
+  // clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
+  
+  ret.N_p = pyublas::numpy_array<float>(ret_num_clusters);       
+  std::copy( clusters.N, clusters.N+ret_num_clusters, ret.N_p.begin());
+
+  ret.pi = pyublas::numpy_array<float>(ret_num_clusters);       
+  std::copy( clusters.pi, clusters.pi+ret_num_clusters, ret.pi.begin());
+
+  ret.constant = pyublas::numpy_array<float>(ret_num_clusters);       
+  std::copy( clusters.constant, clusters.constant+ret_num_clusters, ret.constant.begin());
+
+  ret.avgvar = pyublas::numpy_array<float>(ret_num_clusters);       
+  std::copy( clusters.avgvar, clusters.avgvar+ret_num_clusters, ret.avgvar.begin());
+
+  ret.means = pyublas::numpy_array<float>(num_dimensions*ret_num_clusters);
+  std::copy( clusters.means, clusters.means+num_dimensions*ret_num_clusters, ret.means.begin());
+
+  ret.R = pyublas::numpy_array<float>(num_dimensions*num_dimensions*ret_num_clusters);
+  std::copy( clusters.R, clusters.R+num_dimensions*num_dimensions*ret_num_clusters, ret.R.begin());
+
+  ret.Rinv = pyublas::numpy_array<float>(num_dimensions*num_dimensions*ret_num_clusters);    
+  std::copy( clusters.Rinv, clusters.Rinv+num_dimensions*num_dimensions*ret_num_clusters, ret.Rinv.begin());
+
+  
+  free(scratch_cluster.N);
+  free(scratch_cluster.pi);
+  free(scratch_cluster.constant);
+  free(scratch_cluster.avgvar);
+  free(scratch_cluster.means);
+  free(scratch_cluster.R);
+  free(scratch_cluster.Rinv);
+  free(scratch_cluster.memberships);
+
+  return ret_num_clusters;
+}
+
+
+float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions) {
+  // Add the clusters together, this updates pi,means,R,N and stores in temp_cluster
+  add_clusters(clusters,c1,c2,temp_cluster,num_dimensions);
+    
+  return clusters->N[c1]*clusters->constant[c1] + clusters->N[c2]*clusters->constant[c2] - temp_cluster->N[0]*temp_cluster->constant[0];
+}
+
+void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions) {
+  float wt1,wt2;
+ 
+  wt1 = (clusters->N[c1]) / (clusters->N[c1] + clusters->N[c2]);
+  wt2 = 1.0f - wt1;
+    
+  // Compute new weighted means
+  for(int i=0; i<num_dimensions;i++) {
+    temp_cluster->means[i] = wt1*clusters->means[c1*num_dimensions+i] + wt2*clusters->means[c2*num_dimensions+i];
+  }
+    
+  // Compute new weighted covariance
+  for(int i=0; i<num_dimensions; i++) {
+    for(int j=i; j<num_dimensions; j++) {
+      // Compute R contribution from cluster1
+      temp_cluster->R[i*num_dimensions+j] = ((temp_cluster->means[i]-clusters->means[c1*num_dimensions+i])
+                                            *(temp_cluster->means[j]-clusters->means[c1*num_dimensions+j])
+                                            +clusters->R[c1*num_dimensions*num_dimensions+i*num_dimensions+j])*wt1;
+      // Add R contribution from cluster2
+      temp_cluster->R[i*num_dimensions+j] += ((temp_cluster->means[i]-clusters->means[c2*num_dimensions+i])
+                                             *(temp_cluster->means[j]-clusters->means[c2*num_dimensions+j])
+                                             +clusters->R[c2*num_dimensions*num_dimensions+i*num_dimensions+j])*wt2;
+      // Because its symmetric...
+      temp_cluster->R[j*num_dimensions+i] = temp_cluster->R[i*num_dimensions+j];
+    }
+  }
+    
+  // Compute pi
+  temp_cluster->pi[0] = clusters->pi[c1] + clusters->pi[c2];
+    
+  // compute N
+  temp_cluster->N[0] = clusters->N[c1] + clusters->N[c2];
+
+  float log_determinant;
+  // Copy R to Rinv matrix
+  memcpy(temp_cluster->Rinv,temp_cluster->R,sizeof(float)*num_dimensions*num_dimensions);
+  // Invert the matrix
+  invert_cpu(temp_cluster->Rinv,num_dimensions,&log_determinant);
+  // Compute the constant
+  temp_cluster->constant[0] = (-num_dimensions)*0.5*logf(2*PI)-0.5*log_determinant;
+    
+  // avgvar same for all clusters
+  temp_cluster->avgvar[0] = clusters->avgvar[0];
+}
+
+void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int num_dimensions) {
+  dest->N[c_dest] = src->N[c_src];
+  dest->pi[c_dest] = src->pi[c_src];
+  dest->constant[c_dest] = src->constant[c_src];
+  dest->avgvar[c_dest] = src->avgvar[c_src];
+  memcpy(&(dest->means[c_dest*num_dimensions]),&(src->means[c_src*num_dimensions]),sizeof(float)*num_dimensions);
+  memcpy(&(dest->R[c_dest*num_dimensions*num_dimensions]),&(src->R[c_src*num_dimensions*num_dimensions]),sizeof(float)*num_dimensions*num_dimensions);
+  memcpy(&(dest->Rinv[c_dest*num_dimensions*num_dimensions]),&(src->Rinv[c_src*num_dimensions*num_dimensions]),sizeof(float)*num_dimensions*num_dimensions);
+  // do we need to copy memberships?
+}
+//---------------- END AHC FUNCTIONS ----------------
+
 
 void writeCluster(FILE* f, clusters_t clusters, int c, int num_dimensions) {
   fprintf(f,"Probability: %f\n", clusters.pi[c]);
@@ -409,68 +615,6 @@ void printCluster(clusters_t clusters, int c, int num_dimensions) {
   writeCluster(stdout,clusters,c,num_dimensions);
 }
 
-float cluster_distance(clusters_t clusters, int c1, int c2, clusters_t temp_cluster, int num_dimensions) {
-  // Add the clusters together, this updates pi,means,R,N and stores in temp_cluster
-  add_clusters(clusters,c1,c2,temp_cluster,num_dimensions);
-    
-  return clusters.N[c1]*clusters.constant[c1] + clusters.N[c2]*clusters.constant[c2] - temp_cluster.N[0]*temp_cluster.constant[0];
-}
-
-void add_clusters(clusters_t clusters, int c1, int c2, clusters_t temp_cluster, int num_dimensions) {
-  float wt1,wt2;
- 
-  wt1 = (clusters.N[c1]) / (clusters.N[c1] + clusters.N[c2]);
-  wt2 = 1.0f - wt1;
-    
-  // Compute new weighted means
-  for(int i=0; i<num_dimensions;i++) {
-    temp_cluster.means[i] = wt1*clusters.means[c1*num_dimensions+i] + wt2*clusters.means[c2*num_dimensions+i];
-  }
-    
-  // Compute new weighted covariance
-  for(int i=0; i<num_dimensions; i++) {
-    for(int j=i; j<num_dimensions; j++) {
-      // Compute R contribution from cluster1
-      temp_cluster.R[i*num_dimensions+j] = ((temp_cluster.means[i]-clusters.means[c1*num_dimensions+i])
-                                            *(temp_cluster.means[j]-clusters.means[c1*num_dimensions+j])
-                                            +clusters.R[c1*num_dimensions*num_dimensions+i*num_dimensions+j])*wt1;
-      // Add R contribution from cluster2
-      temp_cluster.R[i*num_dimensions+j] += ((temp_cluster.means[i]-clusters.means[c2*num_dimensions+i])
-                                             *(temp_cluster.means[j]-clusters.means[c2*num_dimensions+j])
-                                             +clusters.R[c2*num_dimensions*num_dimensions+i*num_dimensions+j])*wt2;
-      // Because its symmetric...
-      temp_cluster.R[j*num_dimensions+i] = temp_cluster.R[i*num_dimensions+j];
-    }
-  }
-    
-  // Compute pi
-  temp_cluster.pi[0] = clusters.pi[c1] + clusters.pi[c2];
-    
-  // compute N
-  temp_cluster.N[0] = clusters.N[c1] + clusters.N[c2];
-
-  float log_determinant;
-  // Copy R to Rinv matrix
-  memcpy(temp_cluster.Rinv,temp_cluster.R,sizeof(float)*num_dimensions*num_dimensions);
-  // Invert the matrix
-  invert_cpu(temp_cluster.Rinv,num_dimensions,&log_determinant);
-  // Compute the constant
-  temp_cluster.constant[0] = (-num_dimensions)*0.5*logf(2*PI)-0.5*log_determinant;
-    
-  // avgvar same for all clusters
-  temp_cluster.avgvar[0] = clusters.avgvar[0];
-}
-
-void copy_cluster(clusters_t dest, int c_dest, clusters_t src, int c_src, int num_dimensions) {
-  dest.N[c_dest] = src.N[c_src];
-  dest.pi[c_dest] = src.pi[c_src];
-  dest.constant[c_dest] = src.constant[c_src];
-  dest.avgvar[c_dest] = src.avgvar[c_src];
-  memcpy(&(dest.means[c_dest*num_dimensions]),&(src.means[c_src*num_dimensions]),sizeof(float)*num_dimensions);
-  memcpy(&(dest.R[c_dest*num_dimensions*num_dimensions]),&(src.R[c_src*num_dimensions*num_dimensions]),sizeof(float)*num_dimensions*num_dimensions);
-  memcpy(&(dest.Rinv[c_dest*num_dimensions*num_dimensions]),&(src.Rinv[c_src*num_dimensions*num_dimensions]),sizeof(float)*num_dimensions*num_dimensions);
-  // do we need to copy memberships?
-}
 
 static float double_abs(float x);
 

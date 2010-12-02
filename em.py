@@ -9,8 +9,19 @@ from imp import find_module
 from os.path import join
 
 class GMM(object):
-    def __init__(self, M, version_in):
+    def __init__(self, M, D, N, version_in):
         self.M = M
+        self.D = D
+        self.N = N
+
+        self.N_p = np.array([], dtype=np.float32)
+        self.pi = np.array([], dtype=np.float32)
+        self.constant = np.array([], dtype=np.float32)
+        self.avgvar = np.array([], dtype=np.float32)
+        self.means = np.array([], dtype=np.float32)
+        self.R = np.array([], dtype=np.float32)
+        self.Rinv = np.array([], dtype=np.float32)
+                                        
 
         version_suffix_list = ['CODEVAR_1A', 'CODEVAR_2A', 'CODEVAR_2B', 'CODEVAR_3A']
         version_suffix_mapping = {'1' : 'CODEVAR_1A', 
@@ -62,6 +73,9 @@ class GMM(object):
         #TODO: Change variant selection to key off of parameter values as well as fname
         self.aspmod.add_function(c_main_rend, fname="train")
 
+        # Add merge clusters function
+        self.aspmod.add_function("", fname="merge_2_closest_clusters")
+
         #Add decls to preamble necessary for linking to compiled CUDA sources
         #TODO: Would it be better to pull in this preamble stuff from a file rather than have it  all sitting here?
         cluster_t_decl =""" 
@@ -90,7 +104,6 @@ class GMM(object):
         self.aspmod.add_to_preamble([Line(cluster_t_decl)])
         self.aspmod.add_to_preamble([Line(cuda_launch_decls)])
 
-
         #Add necessary headers
         #TODO: Figure out whether we can free ourselves from cutils
         host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
@@ -99,12 +112,18 @@ class GMM(object):
         for x in host_project_header_names: self.aspmod.add_to_preamble([Include(x, False)])
 
         #Add Boost.Python registration of container class used to return data
+        #TODO: Allow more than one mixture to be returned
         #TODO: Allow pointers to GPU data to be returned
         self.aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
+            .def(pyublas::by_value_rw_member( "N_p", &return_array_container::N_p))
+            .def(pyublas::by_value_rw_member( "pi", &return_array_container::pi))
+            .def(pyublas::by_value_rw_member( "constant", &return_array_container::constant))
+            .def(pyublas::by_value_rw_member( "avgvar", &return_array_container::avgvar)) 
             .def(pyublas::by_value_rw_member( "means", &return_array_container::means))
-            .def(pyublas::by_value_rw_member( "covars", &return_array_container::covars)) ;
+            .def(pyublas::by_value_rw_member( "R", &return_array_container::R))
+            .def(pyublas::by_value_rw_member( "Rinv", &return_array_container::Rinv)) ;
             boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
-
+        
         self.aspmod.add_to_init("""boost::python::class_<clusters_struct>("Clusters");
             boost::python::scope().attr("clusters") = boost::python::object(boost::python::ptr(&clusters));""")
 
@@ -135,9 +154,10 @@ class GMM(object):
         self.aspmod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
         nvcc_toolchain.add_library("project",['.','./include'],[],[])
         #TODO: Get rid of awful hardcoded paths necessitaty by cutils
-        self.aspmod.toolchain.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
-        nvcc_toolchain.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
+        self.aspmod.toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
+        nvcc_toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/egonina/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 
+    #print self.aspmod.module.generate()
         self.aspmod.compile()
 
 
@@ -153,7 +173,20 @@ class GMM(object):
         D = input_data.shape[1]
         #train( int device, int original_num_clusters, int num_dimensions, int num_events, pyublas::numpy_array<float> input_data )
         self.aspmod.train( 0, self.M, D, N, input_data)
+        N_p = self.aspmod.compiled_module.trained.N_p
+        pi = self.aspmod.compiled_module.trained.pi
+        constant = self.aspmod.compiled_module.trained.constant
+        avgvar = self.aspmod.compiled_module.trained.avgvar
         means = self.aspmod.compiled_module.trained.means.reshape((self.M, D))
-        covars = self.aspmod.compiled_module.trained.covars.reshape((self.M, D, D))
+        covars = self.aspmod.compiled_module.trained.R.reshape((self.M, D, D))
+        covarsinv = self.aspmod.compiled_module.trained.Rinv.reshape((self.M, D, D))
 
-        return means, covars
+        return N_p, pi, constant, avgvar, means, covars, covarsinv
+
+    def merge_2_closest_clusters(self):
+        self.aspmod.merge_2_closest_clusters(self.M, self.D, self.N, self.N_p, self.pi, self.constant, self.avgvar, self.means, self.R, self.Rinv)
+        means = self.aspmod.compiled_module.trained.means.reshape((self.M, self.D))
+        covars = self.aspmod.compiled_module.trained.R.reshape((self.M, self.D, self.D))
+           
+        return means, covars#, pi
+    

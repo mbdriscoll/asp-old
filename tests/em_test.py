@@ -9,16 +9,16 @@ from em import *
 
 
 class EMTester(object):
-    def __init__(self, version_in, M):
+    def __init__(self, version_in, M, D):
         self.version_in = version_in
-        self.M = M
-        self.D = 2
-        self.N = 600
-        self.gmm = GMM(M, version_in)
+        self.M = M       
+        N = 600
+
+        self.gmm = GMM(M, D, N, version_in)
 
         self.results = {}
+        self.merge_results = {}
 
-        N = self.N
         np.random.seed(0)
         C = np.array([[0., -0.7], [3.5, .7]])
         Y = np.r_[
@@ -33,13 +33,26 @@ class EMTester(object):
         self.results['Pure'] = ('211', means, covars)
 
     def test_generated(self):        
-        means, covars = self.gmm.train(self.X)
-        print self.gmm.aspmod.get_means(self.gmm.aspmod.compiled_module.clusters, self.D, self.M)
+        N_p, pi, constant, avgvar, means, covars, covarsinv = self.gmm.train(self.X)
         self.results['ASP v'+self.version_in] = ('212', means, covars)
-
+        return N_p, pi, constant, avgvar, means, covars, covarsinv
+        
+    def merge_clusters(self):
+        means, covars = self.gmm.merge_2_closest_clusters()
+        print means
+        print covars
+        
     def test(self):
-        self.test_generated()
         self.test_pure_python()
+        N_p, pi, constant, avgvar, means, covars, covarsinv = self.test_generated()
+        self.gmm.N_p = N_p
+        self.gmm.pi = pi
+        self.gmm.constant = constant
+        self.gmm.avgvar = constant
+        self.gmm.means = means
+        self.gmm.covars = covars
+        self.gmm.covarsinv = covarsinv
+        self.merge_clusters()
 
     def plot(self):
         for t, r in self.results.iteritems():
@@ -57,7 +70,9 @@ class EMTester(object):
                 splot.add_artist(ell)
         pl.show()
 
+        
 if __name__ == '__main__':
-    emt = EMTester(sys.argv[1], 2)
+    emt = EMTester(sys.argv[1], 2, 2)
     emt.test()
     emt.plot()
+    
