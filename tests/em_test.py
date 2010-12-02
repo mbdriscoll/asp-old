@@ -34,7 +34,7 @@ class EMTester(object):
 
     def test_generated(self):        
         means, covars = self.gmm.train(self.X)
-        print self.gmm.aspmod.get_means(self.gmm.aspmod.compiled_module.clusters, self.D, self.M)
+        print self.gmm.get_asp_mod().get_means(self.gmm.get_asp_mod().compiled_module.clusters, self.D, self.M)
         self.results['ASP v'+self.version_in] = ('212', means, covars)
 
     def test(self):
