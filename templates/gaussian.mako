@@ -30,6 +30,8 @@ typedef struct return_array_container
 
 ret_arr_con_t ret;
 
+clusters_t clusters;
+
 // Function prototypes
 void writeCluster(FILE* f, clusters_t clusters, int c,  int num_dimensions);
 void printCluster(clusters_t clusters, int c, int num_dimensions);
@@ -93,7 +95,6 @@ int train (
     
    
   // Setup the cluster data structures on host
-  clusters_t clusters;
   clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
   clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
   clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
@@ -328,14 +329,14 @@ int train (
   // cleanup host memory
   //free(fcs_data_by_event); NOW OWNED BY PYTHON!
   free(fcs_data_by_dimension);
-  free(clusters.N);
-  free(clusters.pi);
-  free(clusters.constant);
-  free(clusters.avgvar);
-  free(clusters.means);
-  free(clusters.R);
-  free(clusters.Rinv);
-  free(clusters.memberships);
+  //free(clusters.N);
+  //free(clusters.pi);
+  //free(clusters.constant);
+  //free(clusters.avgvar);
+  //free(clusters.means);
+  //free(clusters.R);
+  //free(clusters.Rinv);
+  //free(clusters.memberships);
 
   free(saved_clusters.N);
   free(saved_clusters.pi);

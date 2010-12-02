@@ -65,7 +65,7 @@ class GMM(object):
         #Add decls to preamble necessary for linking to compiled CUDA sources
         #TODO: Would it be better to pull in this preamble stuff from a file rather than have it  all sitting here?
         cluster_t_decl =""" 
-            typedef struct {
+            typedef struct clusters_struct {
                 float* N;        // expected # of pixels in cluster: [M]
                 float* pi;       // probability of cluster in GMM: [M]
                 float* constant; // Normalizing constant [M]
@@ -90,6 +90,7 @@ class GMM(object):
         self.aspmod.add_to_preamble([Line(cluster_t_decl)])
         self.aspmod.add_to_preamble([Line(cuda_launch_decls)])
 
+
         #Add necessary headers
         #TODO: Figure out whether we can free ourselves from cutils
         host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
@@ -98,12 +99,21 @@ class GMM(object):
         for x in host_project_header_names: self.aspmod.add_to_preamble([Include(x, False)])
 
         #Add Boost.Python registration of container class used to return data
-        #TODO: Allow more than one mixture to be returned
         #TODO: Allow pointers to GPU data to be returned
         self.aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
             .def(pyublas::by_value_rw_member( "means", &return_array_container::means))
             .def(pyublas::by_value_rw_member( "covars", &return_array_container::covars)) ;
             boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
+
+        self.aspmod.add_to_init("""boost::python::class_<clusters_struct>("Clusters");
+            boost::python::scope().attr("clusters") = boost::python::object(boost::python::ptr(&clusters));""")
+
+        get_means_func = """ pyublas::numpy_array<float> get_means(clusters_t* c, int D, int M){
+            pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*M);
+            std::copy( c->means, c->means+D*M, ret.begin());
+            return ret;}"""
+
+        self.aspmod.add_function(get_means_func, fname="get_means")
 
         # Create cuda-device module
         cuda_mod = self.aspmod.cuda_module

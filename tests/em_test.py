@@ -12,11 +12,13 @@ class EMTester(object):
     def __init__(self, version_in, M):
         self.version_in = version_in
         self.M = M
+        self.D = 2
+        self.N = 600
         self.gmm = GMM(M, version_in)
 
         self.results = {}
 
-        N = 600
+        N = self.N
         np.random.seed(0)
         C = np.array([[0., -0.7], [3.5, .7]])
         Y = np.r_[
@@ -32,6 +34,7 @@ class EMTester(object):
 
     def test_generated(self):        
         means, covars = self.gmm.train(self.X)
+        print self.gmm.aspmod.get_means(self.gmm.aspmod.compiled_module.clusters, self.D, self.M)
         self.results['ASP v'+self.version_in] = ('212', means, covars)
 
     def test(self):
