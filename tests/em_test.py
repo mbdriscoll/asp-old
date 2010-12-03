@@ -38,8 +38,13 @@ class EMTester(object):
         self.results['ASP v'+self.version_in] = ('212', means, covars)
 
     def test(self):
+        import time
+        start = time.time()
         self.test_generated()
+        end_gen = time.time()
         self.test_pure_python()
+        end_pure = time.time()
+        print "Runtime generate: %f\nRuntime pure:%f" % (end_gen-start,end_pure-end_gen)
 
     def plot(self):
         for t, r in self.results.iteritems():
