@@ -93,8 +93,8 @@ class GMM(object):
             void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
             void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
             """
-        GMM.asp_mod.add_to_preamble([Line(cluster_t_decl)])
-        GMM.asp_mod.add_to_preamble([Line(cuda_launch_decls)])
+        GMM.asp_mod.add_to_preamble(cluster_t_decl)
+        GMM.asp_mod.add_to_preamble(cuda_launch_decls)
 
 
         #Add necessary headers
@@ -121,13 +121,10 @@ class GMM(object):
 
         GMM.asp_mod.add_function(get_means_func, fname="get_means")
 
-        # Create cuda-device module
-        cuda_mod = GMM.asp_mod.cuda_module
-
-        #Add headers, decls and rendered source to cuda_module
-        cuda_mod.add_to_preamble([Include('stdio.h',True)])
-        cuda_mod.add_to_preamble([Line(cluster_t_decl)])
-        cuda_mod.add_to_module([Line(cu_kern_rend)])
+        # Add headers, decls and rendered source to cuda_module
+        GMM.asp_mod.add_cuda_header('stdio.h')
+        GMM.asp_mod.add_to_cuda_preamble(cluster_t_decl)
+        GMM.asp_mod.add_to_cuda_module(cu_kern_rend)
 
         # Setup toolchain and compile
         def pyublas_inc():
@@ -136,13 +133,12 @@ class GMM(object):
         def numpy_inc():
             file, pathname, descr = find_module("numpy")
             return join(pathname, "core", "include")
-        nvcc_toolchain = GMM.asp_mod.nvcc_toolchain
-        nvcc_toolchain.cflags += ["-arch=sm_20"]
+        GMM.asp_mod.add_cuda_arch_spec('sm_20')
         GMM.asp_mod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
-        nvcc_toolchain.add_library("project",['.','./include'],[],[])
+        GMM.asp_mod.add_cuda_library("project",['.','./include'],[],[])
         #TODO: Get rid of awful hardcoded paths necessitaty by cutils
-        GMM.asp_mod.toolchain.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
-        nvcc_toolchain.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
+        GMM.asp_mod.add_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
+        GMM.asp_mod.add_cuda_library("cutils",['/home/henry/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/henry/NVIDIA_GPU_Computing_SDK/C/lib','/home/henry/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 
         GMM.asp_mod.compile()
         
