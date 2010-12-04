@@ -13,16 +13,7 @@ class GMM(object):
         self.M = M
         self.D = D
         self.N = N
-
-        self.N_p = np.array([], dtype=np.float32)
-        self.pi = np.array([], dtype=np.float32)
-        self.constant = np.array([], dtype=np.float32)
-        self.avgvar = np.array([], dtype=np.float32)
-        self.means = np.array([], dtype=np.float32)
-        self.R = np.array([], dtype=np.float32)
-        self.Rinv = np.array([], dtype=np.float32)
-                                        
-
+        
         version_suffix_list = ['CODEVAR_1A', 'CODEVAR_2A', 'CODEVAR_2B', 'CODEVAR_3A']
         version_suffix_mapping = {'1' : 'CODEVAR_1A', 
                                   '2' : 'CODEVAR_2A',
@@ -73,8 +64,15 @@ class GMM(object):
         #TODO: Change variant selection to key off of parameter values as well as fname
         self.aspmod.add_function(c_main_rend, fname="train")
 
+        # Add getter functions
+        self.aspmod.add_function("", fname="get_pi")
+        self.aspmod.add_function("", fname="get_means")
+        self.aspmod.add_function("", fname="get_covars")
+        
         # Add merge clusters function
         self.aspmod.add_function("", fname="merge_2_closest_clusters")
+        
+
 
         #Add decls to preamble necessary for linking to compiled CUDA sources
         #TODO: Would it be better to pull in this preamble stuff from a file rather than have it  all sitting here?
@@ -127,13 +125,6 @@ class GMM(object):
         self.aspmod.add_to_init("""boost::python::class_<clusters_struct>("Clusters");
             boost::python::scope().attr("clusters") = boost::python::object(boost::python::ptr(&clusters));""")
 
-        get_means_func = """ pyublas::numpy_array<float> get_means(clusters_t* c, int D, int M){
-            pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*M);
-            std::copy( c->means, c->means+D*M, ret.begin());
-            return ret;}"""
-
-        self.aspmod.add_function(get_means_func, fname="get_means")
-
         # Create cuda-device module
         cuda_mod = self.aspmod.cuda_module
 
@@ -157,7 +148,7 @@ class GMM(object):
         self.aspmod.toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
         nvcc_toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/egonina/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 
-    #print self.aspmod.module.generate()
+        #print self.aspmod.module.generate()
         self.aspmod.compile()
 
 
@@ -167,26 +158,28 @@ class GMM(object):
         clf.fit(input_data)
         return clf.means, clf.covars
 
-
     def train(self, input_data):
         N = input_data.shape[0] #TODO: handle types other than np.array?
         D = input_data.shape[1]
-        #train( int device, int original_num_clusters, int num_dimensions, int num_events, pyublas::numpy_array<float> input_data )
-        self.aspmod.train( 0, self.M, D, N, input_data)
-        N_p = self.aspmod.compiled_module.trained.N_p
-        pi = self.aspmod.compiled_module.trained.pi
-        constant = self.aspmod.compiled_module.trained.constant
-        avgvar = self.aspmod.compiled_module.trained.avgvar
-        means = self.aspmod.compiled_module.trained.means.reshape((self.M, D))
-        covars = self.aspmod.compiled_module.trained.R.reshape((self.M, D, D))
-        covarsinv = self.aspmod.compiled_module.trained.Rinv.reshape((self.M, D, D))
-
-        return N_p, pi, constant, avgvar, means, covars, covarsinv
+        self.clusters = self.aspmod.train( 0, self.M, D, N, input_data)
+        return self.clusters
 
     def merge_2_closest_clusters(self):
-        self.aspmod.merge_2_closest_clusters(self.M, self.D, self.N, self.N_p, self.pi, self.constant, self.avgvar, self.means, self.R, self.Rinv)
-        means = self.aspmod.compiled_module.trained.means.reshape((self.M, self.D))
-        covars = self.aspmod.compiled_module.trained.R.reshape((self.M, self.D, self.D))
-           
-        return means, covars#, pi
+        self.clusters = self.aspmod.merge_2_closest_clusters(self.clusters, self.M, self.D, self.N)
+        self.M -= 1
+        return self.clusters
+
+    def get_pi(self):
+        pi = self.aspmod.get_pi(self.clusters, self.M)
+        return pi
     
+    def get_means(self):
+        means = self.aspmod.get_means(self.clusters, self.M, self.D).reshape((self.M, self.D))
+        return means
+    
+    def get_covars(self):
+        covars1 = self.aspmod.get_covars(self.clusters, self.M, self.D).reshape((self.M, self.D, self.D))
+        return covars1
+    
+
+

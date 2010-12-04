@@ -38,18 +38,6 @@ ret_arr_con_t ret;
 clusters_t clusters;
 
 //AHC functions
-//int merge_2_closest_clusters(int num_clusters, int num_dimensions, int num_events, clusters_t *clusters);
-int merge_2_closest_clusters(int num_clusters,   
-                             int num_dimensions,
-                             int num_events,           
-                             pyublas::numpy_array<float> N,
-                             pyublas::numpy_array<float> pi,
-                             pyublas::numpy_array<float> constant,
-                             pyublas::numpy_array<float> avgvar,
-                             pyublas::numpy_array<float> means,
-                             pyublas::numpy_array<float> R,
-                             pyublas::numpy_array<float> Rinv
-                             );
 void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int num_dimensions);
 void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
 float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
@@ -61,12 +49,12 @@ void printCluster(clusters_t clusters, int c, int num_dimensions);
 void invert_cpu(float* data, int actualsize, float* log_determinant);
 int invert_matrix(float* a, int n, float* determinant);
 
-int train (
-        int device,
-        int num_clusters, 
-        int num_dimensions, 
-        int num_events, 
-        pyublas::numpy_array<float> input_data ) 
+boost::python::object train (
+                      int device,
+                      int num_clusters, 
+                      int num_dimensions, 
+                      int num_events, 
+                      pyublas::numpy_array<float> input_data ) 
 {
 
   float* fcs_data_by_event = input_data.data();
@@ -99,7 +87,8 @@ int train (
   float* fcs_data_by_dimension  = (float*) malloc(sizeof(float)*num_events*num_dimensions);
   if(!fcs_data_by_dimension) {
     printf("ERROR, not enough memory for both formats\n");
-    return 1;
+    clusters_t * x = NULL;
+    return boost::python::object(boost::python::ptr(x)); 
   }
     
   //printf("Number of events: %d\n",num_events);
@@ -115,7 +104,7 @@ int train (
     
    
   // Setup the cluster data structures on host
-  clusters_t clusters;
+  //clusters_t clusters;
   clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
   clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
   clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
@@ -125,8 +114,9 @@ int train (
   clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
   clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
   if(!clusters.means || !clusters.R || !clusters.Rinv || !clusters.memberships) { 
-    printf("ERROR: Could not allocate memory for clusters.\n"); 
-    return 1; 
+    printf("ERROR: Could not allocate memory for clusters.\n");
+    clusters_t * x = NULL;
+    return boost::python::object(boost::python::ptr(x)); 
   }
 
   float *temp_buffer_2b = NULL;
@@ -152,7 +142,9 @@ int train (
   saved_clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
   if(!saved_clusters.means || !saved_clusters.R || !saved_clusters.Rinv || !saved_clusters.memberships) { 
     printf("ERROR: Could not allocate memory for clusters.\n"); 
-    return 1; 
+    //return NULL;
+        clusters_t * x = NULL;  
+    return boost::python::object(boost::python::ptr(x)); 
   }
 
   
@@ -324,26 +316,26 @@ int train (
         
     //} // outer loop from M to 1 clusters
 
-  ret.N_p = pyublas::numpy_array<float>(num_clusters);       
-  std::copy( clusters.N, clusters.N+num_clusters, ret.N_p.begin());
+  // ret.N_p = pyublas::numpy_array<float>(num_clusters);       
+  // std::copy( clusters.N, clusters.N+num_clusters, ret.N_p.begin());
 
-  ret.pi = pyublas::numpy_array<float>(num_clusters);       
-  std::copy( clusters.pi, clusters.pi+num_clusters, ret.pi.begin());
+  // ret.pi = pyublas::numpy_array<float>(num_clusters);       
+  // std::copy( clusters.pi, clusters.pi+num_clusters, ret.pi.begin());
 
-  ret.constant = pyublas::numpy_array<float>(num_clusters);       
-  std::copy( clusters.constant, clusters.constant+num_clusters, ret.constant.begin());
+  // ret.constant = pyublas::numpy_array<float>(num_clusters);       
+  // std::copy( clusters.constant, clusters.constant+num_clusters, ret.constant.begin());
 
-  ret.avgvar = pyublas::numpy_array<float>(num_clusters);       
-  std::copy( clusters.avgvar, clusters.avgvar+num_clusters, ret.avgvar.begin());
+  // ret.avgvar = pyublas::numpy_array<float>(num_clusters);       
+  // std::copy( clusters.avgvar, clusters.avgvar+num_clusters, ret.avgvar.begin());
 
-  ret.means = pyublas::numpy_array<float>(num_dimensions*num_clusters);
-  std::copy( clusters.means, clusters.means+num_dimensions*num_clusters, ret.means.begin());
+  // ret.means = pyublas::numpy_array<float>(num_dimensions*num_clusters);
+  // std::copy( clusters.means, clusters.means+num_dimensions*num_clusters, ret.means.begin());
 
-  ret.R = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);
-  std::copy( clusters.R, clusters.R+num_dimensions*num_dimensions*num_clusters, ret.R.begin());
+  // ret.R = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);
+  // std::copy( clusters.R, clusters.R+num_dimensions*num_dimensions*num_clusters, ret.R.begin());
 
-  ret.Rinv = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);    
-  std::copy( clusters.Rinv, clusters.Rinv+num_dimensions*num_dimensions*num_clusters, ret.Rinv.begin());
+  // ret.Rinv = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);    
+  // std::copy( clusters.Rinv, clusters.Rinv+num_dimensions*num_dimensions*num_clusters, ret.Rinv.begin());
 
 
   //================================ EM DONE ==============================
@@ -389,33 +381,38 @@ int train (
   CUDA_SAFE_CALL(cudaFree(temp_clusters.memberships));
   CUDA_SAFE_CALL(cudaFree(d_clusters));
 
-  return 0;
+  return boost::python::object(boost::python::ptr(&clusters));
+  //return &clusters;
 }
 
+// Accessor functions for pi, means and covar
+
+pyublas::numpy_array<float> get_pi(clusters_t* c, int M){
+    pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(M);
+    std::copy( c->pi, c->pi+M, ret.begin());
+    return ret;
+}
+
+pyublas::numpy_array<float> get_means(clusters_t* c, int M, int D){
+    pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*M);
+    std::copy( c->means, c->means+D*M, ret.begin());
+    return ret;
+}
+
+pyublas::numpy_array<float> get_covars(clusters_t* c, int M, int D){
+    pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*D*M);
+    std::copy( c->R, c->R+D*D*M, ret.begin());
+    return ret;
+}
 
 //------------------------- AHC FUNCTIONS ----------------------------
 //int merge_2_closest_clusters(int num_clusters, int num_dimensions, int num_events, clusters_t *clusters) {
-int merge_2_closest_clusters(int num_clusters,   
-                             int num_dimensions,
-                             int num_events,           
-                             pyublas::numpy_array<float> N,
-                             pyublas::numpy_array<float> pi,
-                             pyublas::numpy_array<float> constant,
-                             pyublas::numpy_array<float> avgvar,
-                             pyublas::numpy_array<float> means,
-                             pyublas::numpy_array<float> R,
-                             pyublas::numpy_array<float> Rinv
-                             ) { 
-
-  clusters_t clusters;
-  clusters.N = N.data();
-  clusters.pi =  pi.data();
-  clusters.constant = constant.data();
-  clusters.avgvar = avgvar.data();
-  clusters.means = means.data();
-  clusters.R = R.data();
-  clusters.Rinv = Rinv.data();
-  
+boost::python::object merge_2_closest_clusters(clusters_t* clusters,
+                                        int num_clusters,   
+                                        int num_dimensions,         
+                                        int num_events  
+                                        ) { 
+                                          
   int min_c1, min_c2;
   float distance, min_distance = 0.0;
   int ret_num_clusters = num_clusters;
@@ -434,10 +431,10 @@ int merge_2_closest_clusters(int num_clusters,
   
   // First eliminate any "empty" clusters 
   for(int i=ret_num_clusters-1; i >= 0; i--) {
-    if(clusters.N[i] < 1.0) {
+    if(clusters->N[i] < 1.0) {
       //DEBUG("Cluster #%d has less than 1 data point in it.\n",i);
       for(int j=i; j < ret_num_clusters-1; j++) {
-        copy_cluster(&clusters,j,&clusters,j+1,num_dimensions);
+        copy_cluster(clusters,j,clusters,j+1,num_dimensions);
       }
       ret_num_clusters--;
     }
@@ -452,7 +449,7 @@ int merge_2_closest_clusters(int num_clusters,
   for(int c1=0; c1<ret_num_clusters;c1++) {
     for(int c2=c1+1; c2<ret_num_clusters;c2++) {
       // compute distance function between the 2 clusters
-      distance = cluster_distance(&clusters,c1,c2,&scratch_cluster,num_dimensions);
+      distance = cluster_distance(clusters,c1,c2,&scratch_cluster,num_dimensions);
                     
       // Keep track of minimum distance
       if((c1 ==0 && c2 == 1) || distance < min_distance) {
@@ -465,44 +462,15 @@ int merge_2_closest_clusters(int num_clusters,
 
   //printf("\nMinimum distance between (%d,%d). Combining clusters\n",min_c1,min_c2);
   // Add the two clusters with min distance together
-  add_clusters(&clusters,min_c1,min_c2,&scratch_cluster,num_dimensions);
+  add_clusters(clusters,min_c1,min_c2,&scratch_cluster,num_dimensions);
 
   // Copy new combined cluster into the main group of clusters, compact them
-  copy_cluster(&clusters,min_c1,&scratch_cluster,0,num_dimensions);
+  copy_cluster(clusters,min_c1,&scratch_cluster,0,num_dimensions);
 
   for(int i=min_c2; i < num_clusters-1; i++) {
   
-    copy_cluster(&clusters,i,&clusters,i+1,num_dimensions);
+    copy_cluster(clusters,i,clusters,i+1,num_dimensions);
   }
-
-  // clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
-  // clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
-  // clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
-  // clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters);
-  // clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);
-  // clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  // clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  
-  ret.N_p = pyublas::numpy_array<float>(ret_num_clusters);       
-  std::copy( clusters.N, clusters.N+ret_num_clusters, ret.N_p.begin());
-
-  ret.pi = pyublas::numpy_array<float>(ret_num_clusters);       
-  std::copy( clusters.pi, clusters.pi+ret_num_clusters, ret.pi.begin());
-
-  ret.constant = pyublas::numpy_array<float>(ret_num_clusters);       
-  std::copy( clusters.constant, clusters.constant+ret_num_clusters, ret.constant.begin());
-
-  ret.avgvar = pyublas::numpy_array<float>(ret_num_clusters);       
-  std::copy( clusters.avgvar, clusters.avgvar+ret_num_clusters, ret.avgvar.begin());
-
-  ret.means = pyublas::numpy_array<float>(num_dimensions*ret_num_clusters);
-  std::copy( clusters.means, clusters.means+num_dimensions*ret_num_clusters, ret.means.begin());
-
-  ret.R = pyublas::numpy_array<float>(num_dimensions*num_dimensions*ret_num_clusters);
-  std::copy( clusters.R, clusters.R+num_dimensions*num_dimensions*ret_num_clusters, ret.R.begin());
-
-  ret.Rinv = pyublas::numpy_array<float>(num_dimensions*num_dimensions*ret_num_clusters);    
-  std::copy( clusters.Rinv, clusters.Rinv+num_dimensions*num_dimensions*ret_num_clusters, ret.Rinv.begin());
 
   
   free(scratch_cluster.N);
@@ -514,7 +482,8 @@ int merge_2_closest_clusters(int num_clusters,
   free(scratch_cluster.Rinv);
   free(scratch_cluster.memberships);
 
-  return ret_num_clusters;
+  return boost::python::object(boost::python::ptr(clusters));
+  //return boost::python::object(clusters); 
 }
 
 

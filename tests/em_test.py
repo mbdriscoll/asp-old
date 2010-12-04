@@ -11,13 +11,14 @@ from em import *
 class EMTester(object):
     def __init__(self, version_in, M, D):
         self.version_in = version_in
-        self.M = M       
+        self.M = M
+        self.D = D
         N = 600
 
         self.gmm = GMM(M, D, N, version_in)
 
         self.results = {}
-        self.merge_results = {}
+        #self.merge_results = {}
 
         np.random.seed(0)
         C = np.array([[0., -0.7], [3.5, .7]])
@@ -30,30 +31,29 @@ class EMTester(object):
 
     def test_pure_python(self):
         means, covars = self.gmm.train_using_python(self.X)
-        self.results['Pure'] = ('211', means, covars)
+        self.results['Pure'] = ('311', means, covars)
 
     def test_generated(self):        
-        N_p, pi, constant, avgvar, means, covars, covarsinv = self.gmm.train(self.X)
-        self.results['ASP v'+self.version_in] = ('212', means, covars)
-        return N_p, pi, constant, avgvar, means, covars, covarsinv
+        clusters = self.gmm.train(self.X)
+        means = self.gmm.get_means()
+        covars = self.gmm.get_covars()
+        self.results['ASP v'+self.version_in] = ('312', means, covars)
+        return means, covars
         
     def merge_clusters(self):
-        means, covars = self.gmm.merge_2_closest_clusters()
-        print means
-        print covars
+        clusters = self.gmm.merge_2_closest_clusters()
+        means = self.gmm.get_means()
+        covars = self.gmm.get_covars()
+        self.results['MERGE ASP v'+self.version_in] = ('313', means, covars)
+        return means, covars
         
-    def test(self):
+    def test_train(self):
         self.test_pure_python()
-        N_p, pi, constant, avgvar, means, covars, covarsinv = self.test_generated()
-        self.gmm.N_p = N_p
-        self.gmm.pi = pi
-        self.gmm.constant = constant
-        self.gmm.avgvar = constant
-        self.gmm.means = means
-        self.gmm.covars = covars
-        self.gmm.covarsinv = covarsinv
-        self.merge_clusters()
+        self.test_generated()
 
+    def test_merge(self):
+        self.merge_clusters()
+        
     def plot(self):
         for t, r in self.results.iteritems():
             splot = pl.subplot(r[0], title=t)
@@ -69,10 +69,10 @@ class EMTester(object):
                 ell.set_alpha(0.5)
                 splot.add_artist(ell)
         pl.show()
-
         
 if __name__ == '__main__':
     emt = EMTester(sys.argv[1], 2, 2)
-    emt.test()
+    emt.test_train()
+    emt.test_merge()
     emt.plot()
-    
+     
