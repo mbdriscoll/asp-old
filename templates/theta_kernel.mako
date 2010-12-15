@@ -304,7 +304,7 @@ __device__ void compute_indices(int num_events, int* start, int* stop) {
 }
 
 __global__ void
-estep1(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_events, float* likelihood) {
+estep1(float* fcs_data, clusters_t* clusters, float *cluster_memberships, int num_dimensions, int num_events, float* likelihood) {
     
     // Cached cluster parameters
     __shared__ float means[MAX_NUM_DIMENSIONS];
@@ -362,13 +362,13 @@ estep1(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_events
                 }
             }
         #endif
-        clusters->memberships[c*num_events+event] = -0.5f * like + constant + logf(cluster_pi); // numerator of the probability computation
+        cluster_memberships[c*num_events+event] = -0.5f * like + constant + logf(cluster_pi); // numerator of the probability computation
     }
 }
 
     
 __global__ void
-estep2(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events, float* likelihood) {
+estep2(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* likelihood) {
     float temp;
     float thread_likelihood = 0.0f;
     __shared__ float total_likelihoods[NUM_THREADS_ESTEP];
@@ -400,15 +400,15 @@ estep2(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_cluste
     //  log(sum(exp(x_i)) = max(z) + log(sum(exp(z_i-max(z))))
     for(int pixel=start_index; pixel<end_index; pixel += NUM_THREADS_ESTEP) {
         // find the maximum likelihood for this event
-        max_likelihood = clusters->memberships[pixel];
+        max_likelihood = cluster_memberships[pixel];
         for(int c=1; c<num_clusters; c++) {
-            max_likelihood = fmaxf(max_likelihood,clusters->memberships[c*num_events+pixel]);
+            max_likelihood = fmaxf(max_likelihood,cluster_memberships[c*num_events+pixel]);
         }
 
         // Compute P(x_n), the denominator of the probability (sum of weighted likelihoods)
         denominator_sum = 0.0f;
         for(int c=0; c<num_clusters; c++) {
-            temp = expf(clusters->memberships[c*num_events+pixel]-max_likelihood);
+            temp = expf(cluster_memberships[c*num_events+pixel]-max_likelihood);
             denominator_sum += temp;
         }
         temp = max_likelihood + logf(denominator_sum);
@@ -416,7 +416,7 @@ estep2(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_cluste
         
         // Divide by denominator, also effectively normalize probabilities
         for(int c=0; c<num_clusters; c++) {
-            clusters->memberships[c*num_events+pixel] = expf(clusters->memberships[c*num_events+pixel] - temp);
+            cluster_memberships[c*num_events+pixel] = expf(cluster_memberships[c*num_events+pixel] - temp);
             //printf("Probability that pixel #%d is in cluster #%d: %f\n",pixel,c,clusters->memberships[c*num_events+pixel]);
         }
     }
@@ -431,7 +431,7 @@ estep2(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_cluste
 }
 
 __global__ void
-mstep_means(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) {
+mstep_means(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
     // One block per cluster, per dimension:  (M x D) grid of blocks
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
@@ -442,7 +442,7 @@ mstep_means(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_c
     float sum = 0.0f;
     
     for(int event=tid; event < num_events; event+= num_threads) {
-        sum += fcs_data[d*num_events+event]*clusters->memberships[c*num_events+event];
+        sum += fcs_data[d*num_events+event]*cluster_memberships[c*num_events+event];
     }
     temp_sum[tid] = sum;
     
@@ -458,7 +458,7 @@ mstep_means(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_c
 }
 
 __global__ void
-mstep_means_transpose(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) {
+mstep_means_transpose(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
     // One block per cluster, per dimension:  (M x D) grid of blocks
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
@@ -469,7 +469,7 @@ mstep_means_transpose(float* fcs_data, clusters_t* clusters, int num_dimensions,
     float sum = 0.0f;
     
     for(int event=tid; event < num_events; event+= num_threads) {
-        sum += fcs_data[d*num_events+event]*clusters->memberships[c*num_events+event];
+        sum += fcs_data[d*num_events+event]*cluster_memberships[c*num_events+event];
     }
     temp_sum[tid] = sum;
     
@@ -485,7 +485,7 @@ mstep_means_transpose(float* fcs_data, clusters_t* clusters, int num_dimensions,
 }
 
 __global__ void
-mstep_N(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) {
+mstep_N(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
     
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
@@ -500,7 +500,7 @@ mstep_N(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clust
     float sum = 0.0f;
     // Break all the events accross the threads, add up probabilities
     for(int event=tid; event < num_events; event += num_threads) {
-        sum += clusters->memberships[c*num_events+event];
+        sum += cluster_memberships[c*num_events+event];
     }
     temp_sums[tid] = sum;
  
@@ -604,7 +604,7 @@ __device__ void compute_row_col_transpose(int n, int* row, int* col) {
  *  i.e. dim3 gridDim(num_clusters,num_dimensions*num_dimensions)
  */
 __global__ void
-mstep_covariance(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
     int tid = threadIdx.x; // easier variable name for our thread ID
 
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -633,7 +633,7 @@ mstep_covariance(float* fcs_data, clusters_t* clusters, int num_dimensions, int 
     float cov_sum = 0.0f;
 
     for(int event=tid; event < num_events; event+=NUM_THREADS_MSTEP) {
-      cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*clusters->memberships[c*num_events+event];
+      cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*cluster_memberships[c*num_events+event];
       //cov_sum += means[row]; //*(fcs_data[col*num_events+event]-means[col])*clusters->memberships[c*num_events+event];
     }
 
@@ -673,7 +673,7 @@ mstep_covariance(float* fcs_data, clusters_t* clusters, int num_dimensions, int 
  * Must be launched with a M blocks and D x D/2 threads: 
  */
 __global__ void
-mstep_covariance_2a(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance_2a(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
     int tid = threadIdx.x; // easier variable name for our thread ID
 
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -702,7 +702,7 @@ mstep_covariance_2a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
 
 
     for(int event=0; event < num_events; event++) {
-      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*clusters->memberships[c*num_events+event];
+      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*cluster_memberships[c*num_events+event];
     }
 
     __syncthreads();
@@ -737,7 +737,7 @@ mstep_covariance_2a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
  * B is the number of event blocks (N/events_per_block)
  */
 __global__ void
-mstep_covariance_2b(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events, int event_block_size, int num_b, float *temp_buffer) {
+mstep_covariance_2b(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, int event_block_size, int num_b, float *temp_buffer) {
 
   int tid = threadIdx.x; // easier variable name for our thread ID
     
@@ -773,7 +773,7 @@ mstep_covariance_2b(float* fcs_data, clusters_t* clusters, int num_dimensions, i
     float cov_sum = 0.0f; //my local sum for the matrix element, I (thread) sum up over all N events into this var
 
     for(int event=e_start; event < e_end; event++) {
-      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*clusters->memberships[c*num_events+event];
+      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*cluster_memberships[c*num_events+event];
     }
 
     myR[matrix_index] = cov_sum;
@@ -813,7 +813,7 @@ mstep_covariance_2b(float* fcs_data, clusters_t* clusters, int num_dimensions, i
  * Must be launched with a D*D/2 blocks: 
  */
 __global__ void
-mstep_covariance_3a(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance_3a(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
 
 
   int tid = threadIdx.x; // easier variable name for our thread ID
@@ -847,9 +847,9 @@ mstep_covariance_3a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
     
     for(int event=tid; event < num_events; event+=NUM_THREADS_MSTEP) {
 #ifdef SH_MEM_EVENTS
-      cov_sum += (events[row*num_events+event]-means[c*num_dimensions+row])*(events[col*num_events+event]-means[c*num_dimensions+col])*clusters->memberships[c*num_events+event];
+      cov_sum += (events[row*num_events+event]-means[c*num_dimensions+row])*(events[col*num_events+event]-means[c*num_dimensions+col])*cluster_memberships[c*num_events+event];
 #else
-      cov_sum += (fcs_data[row*num_events+event]-means[c*num_dimensions+row])*(fcs_data[col*num_events+event]-means[c*num_dimensions+col])*clusters->memberships[c*num_events+event];
+      cov_sum += (fcs_data[row*num_events+event]-means[c*num_dimensions+row])*(fcs_data[col*num_events+event]-means[c*num_dimensions+col])*cluster_memberships[c*num_events+event];
 #endif
       
     }
@@ -902,7 +902,7 @@ mstep_covariance_3a(float* fcs_data, clusters_t* clusters, int num_dimensions, i
  *  i.e. dim3 gridDim(num_clusters,num_dimensions*num_dimensions)
  */
 __global__ void
-mstep_covariance_transpose(float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance_transpose(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
   int tid = threadIdx.x; // easier variable name for our thread ID
 
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -939,7 +939,7 @@ mstep_covariance_transpose(float* fcs_data, clusters_t* clusters, int num_dimens
     float cov_sum = 0.0f;
 
     for(int event=tid; event < num_events; event+=NUM_THREADS_MSTEP) {
-        cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*clusters->memberships[c*num_events+event]; 
+        cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*cluster_memberships[c*num_events+event]; 
     }
     temp_sums[tid] = cov_sum;
 
@@ -1000,52 +1000,52 @@ void constants_kernel_launch(clusters_t* d_clusters, int original_num_clusters, 
   constants_kernel<<<original_num_clusters, 64>>>(d_clusters,original_num_clusters,num_dimensions);
 }
 
-void estep1_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters)
+void estep1_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters)
 {
-  estep1<<<dim3(NUM_BLOCKS_ESTEP,num_clusters), NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods);
+  estep1<<<dim3(NUM_BLOCKS_ESTEP,num_clusters), NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_events,d_likelihoods);
 }
 
-void estep2_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods)
+void estep2_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods)
 {
-  estep2<<<NUM_BLOCKS_ESTEP, NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);
+  estep2<<<NUM_BLOCKS_ESTEP, NUM_THREADS_ESTEP>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events,d_likelihoods);
 }
 
-void mstep_N_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events)
+void mstep_N_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events)
 {
-  mstep_N<<<num_clusters, NUM_THREADS_MSTEP>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);
+  mstep_N<<<num_clusters, NUM_THREADS_MSTEP>>>(d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
 }
 
-void mstep_means_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events)
+void mstep_means_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events)
 {
   dim3 gridDim1(num_clusters,num_dimensions);
-  mstep_means<<<gridDim1, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
+  mstep_means<<<gridDim1, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
 }
 
-void mstep_covar_launch_CODEVAR_1A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch_CODEVAR_1A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
 {
   dim3 gridDim2(num_clusters,num_dimensions*(num_dimensions+1)/2);
-  mstep_covariance<<<gridDim2, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
+  mstep_covariance<<<gridDim2, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
 }
 
-void mstep_covar_launch_CODEVAR_2A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch_CODEVAR_2A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
 {
   int num_threads = num_dimensions*(num_dimensions+1)/2;
-  mstep_covariance_2a<<<num_clusters, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);
+  mstep_covariance_2a<<<num_clusters, num_threads>>>(d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
 }
 
-void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
 {
   int num_event_blocks = NUM_EVENT_BLOCKS;
   int event_block_size = num_events%NUM_EVENT_BLOCKS == 0 ? num_events/NUM_EVENT_BLOCKS:num_events/(NUM_EVENT_BLOCKS-1);
   dim3 gridDim2(num_clusters,num_event_blocks);
   int num_threads = num_dimensions*(num_dimensions+1)/2;
-  mstep_covariance_2b<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events, event_block_size, num_event_blocks, temp_buffer_2b);
+  mstep_covariance_2b<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events, event_block_size, num_event_blocks, temp_buffer_2b);
 }
 
-void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
 {
   int num_blocks = num_dimensions*(num_dimensions+1)/2;
-  mstep_covariance_3a<<<num_blocks, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
+  mstep_covariance_3a<<<num_blocks, NUM_THREADS_MSTEP>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
 }
 
 #endif // #ifndef _TEMPLATE_KERNEL_H_

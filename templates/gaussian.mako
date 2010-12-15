@@ -22,20 +22,27 @@
 #define ENABLE_CODEVAR_2B_BUFFER_ALLOC ${enable_2b_buffer}
 #define VERSION_SUFFIX     ${version_suffix}
 
-typedef struct return_array_container
-{
-  pyublas::numpy_array<float> N_p;
-  pyublas::numpy_array<float> pi;
-  pyublas::numpy_array<float> constant;     
-  pyublas::numpy_array<float> avgvar;      
-  pyublas::numpy_array<float> means;
-  pyublas::numpy_array<float> R;
-  pyublas::numpy_array<float> Rinv;
-} ret_arr_con_t;
+//=== Data structure pointers ===
 
-ret_arr_con_t ret;
+//CPU copies of events
+float *fcs_data_by_event;
+float *fcs_data_by_dimension;
 
+//GPU copies of events
+float* d_fcs_data_by_event;
+float* d_fcs_data_by_dimension;
+
+//CPU copies of clusters
 clusters_t clusters;
+clusters_t saved_clusters;
+float *cluster_memberships;
+
+//GPU copies of clusters
+clusters_t temp_clusters;
+clusters_t* d_clusters;
+float *d_cluster_memberships;
+
+//=================================
 
 //AHC functions
 void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int num_dimensions);
@@ -50,75 +57,39 @@ void invert_cpu(float* data, int actualsize, float* log_determinant);
 int invert_matrix(float* a, int n, float* determinant);
 
 boost::python::object train (
-                      int device,
-                      int num_clusters, 
-                      int num_dimensions, 
-                      int num_events, 
-                      pyublas::numpy_array<float> input_data ) 
+                             int num_clusters, 
+                             int num_dimensions, 
+                             int num_events, 
+                             pyublas::numpy_array<float> input_data ) 
 {
 
-  float* fcs_data_by_event = input_data.data();
-  int original_num_clusters = num_clusters; //should just %s/original_num/num/g
-    
-  // Set the device to run on... 0 for GTX 480, 1 for GTX 285 on oak
-  int GPUCount;
-  CUDA_SAFE_CALL(cudaGetDeviceCount(&GPUCount));
-  if(GPUCount == 0) {
-    //printf("Only 1 CUDA device found, defaulting to it.\n");
-    device = 0;
-  } else if (GPUCount >= 1 && device >= 0) {
-    //printf("Multiple CUDA devices found, selecting device based on user input: %d\n",device);
-  } else if(GPUCount >= 1 && DEVICE < GPUCount) {
-    //printf("Multiple CUDA devices found, selecting based on compiled default: %d\n",DEVICE);
-    device = DEVICE;
-  } else {
-    //printf("Fatal Error: Unable to set device to %d, not enough GPUs.\n",DEVICE);
-    exit(2);
-  }
-  CUDA_SAFE_CALL(cudaSetDevice(device));
-    
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, device);
-  //printf("\nUsing device - %s\n\n", prop.name);
-    
-  // Transpose the event data (allows coalesced access pattern in E-step kernel)
-  // This has consecutive values being from the same dimension of the data 
-  // (num_dimensions by num_events matrix)
-  float* fcs_data_by_dimension  = (float*) malloc(sizeof(float)*num_events*num_dimensions);
-  if(!fcs_data_by_dimension) {
-    printf("ERROR, not enough memory for both formats\n");
-    clusters_t * x = NULL;
-    return boost::python::object(boost::python::ptr(x)); 
-  }
-    
-  //printf("Number of events: %d\n",num_events);
-  //printf("Number of dimensions: %d\n",num_dimensions);
-
-  for(int e=0; e<num_events; e++) {
-    for(int d=0; d<num_dimensions; d++) {
-      fcs_data_by_dimension[d*num_events+e] = fcs_data_by_event[e*num_dimensions+d];
-    }
-  }    
-
   //printf("Number of clusters: %d\n\n",num_clusters);
-    
-   
-  // Setup the cluster data structures on host
-  //clusters_t clusters;
-  clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
-  clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
-  clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
-  clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters);
-  clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);
-  clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
-  if(!clusters.means || !clusters.R || !clusters.Rinv || !clusters.memberships) { 
-    printf("ERROR: Could not allocate memory for clusters.\n");
-    clusters_t * x = NULL;
-    return boost::python::object(boost::python::ptr(x)); 
-  }
+  
 
+  float min_rissanen, rissanen;
+  
+  int original_num_clusters = num_clusters; //should just %s/original_num/num/g
+
+  // ================= Cluster membership alloc on CPU and GPU =============== 
+  cluster_memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*original_num_clusters));
+  // ========================================================================= 
+  
+  /* // ================== Temp cluster data allocation on CPU  =================  */
+
+  /* saved_clusters.N = (float*) malloc(sizeof(float)*original_num_clusters); */
+  /* saved_clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters); */
+  /* saved_clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters); */
+  /* saved_clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters); */
+  /* saved_clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters); */
+  /* saved_clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters); */
+  /* saved_clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters); */
+  /* //  saved_clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters); */
+ 
+  /* // ==========================================================================  */
+
+  
+  // ================= Temp buffer for codevar 2b ================ 
   float *temp_buffer_2b = NULL;
 #if ENABLE_CODEVAR_2B_BUFFER_ALLOC
   //scratch space to clear out clusters->R
@@ -129,59 +100,8 @@ boost::python::object train (
   CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_buffer_2b),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
   CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*original_num_clusters, cudaMemcpyHostToDevice) );
 #endif
+  //=============================================================== 
     
-  // Declare another set of clusters for saving the results of the best configuration
-  clusters_t saved_clusters;
-  saved_clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);
-  saved_clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
-  saved_clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
-  saved_clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters);
-  saved_clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);
-  saved_clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  saved_clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  saved_clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
-  if(!saved_clusters.means || !saved_clusters.R || !saved_clusters.Rinv || !saved_clusters.memberships) { 
-    printf("ERROR: Could not allocate memory for clusters.\n"); 
-    //return NULL;
-        clusters_t * x = NULL;  
-    return boost::python::object(boost::python::ptr(x)); 
-  }
-
-  
-  // Setup the cluster data structures on device
-  // First allocate structures on the host, CUDA malloc the arrays
-  // Then CUDA malloc structures on the device and copy them over
-  clusters_t temp_clusters;
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.N),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.pi),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.constant),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.avgvar),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.means),sizeof(float)*num_dimensions*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.R),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.Rinv),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.memberships),sizeof(float)*num_events*original_num_clusters));
-   
-  // Allocate a struct on the device 
-  clusters_t* d_clusters;
-  CUDA_SAFE_CALL(cudaMalloc((void**) &d_clusters, sizeof(clusters_t)));
-    
-  // Copy Cluster data to device
-  CUDA_SAFE_CALL(cudaMemcpy(d_clusters,&temp_clusters,sizeof(clusters_t),cudaMemcpyHostToDevice));
-
-  int mem_size = num_dimensions*num_events*sizeof(float);
-    
-  float min_rissanen, rissanen;
-    
-  // allocate device memory for FCS data
-  float* d_fcs_data_by_event;
-  float* d_fcs_data_by_dimension;
-  CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_event, mem_size));
-  CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_dimension, mem_size));
-  // copy FCS to device
-  CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_event, fcs_data_by_event, mem_size,cudaMemcpyHostToDevice) );
-  CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_dimension, fcs_data_by_dimension, mem_size,cudaMemcpyHostToDevice) );
-    
-   
   //////////////// Initialization done, starting kernels //////////////// 
   fflush(stdout);
 
@@ -213,129 +133,96 @@ boost::python::object train (
 
   //int num_clusters = original_num_clusters;
   //for(int num_clusters=original_num_clusters; num_clusters >= stop_number; num_clusters--) {
-    /*************** EM ALGORITHM *****************************/
+  /*************** EM ALGORITHM *****************************/
         
-    // do initial regrouping
-    // Regrouping means calculate a cluster membership probability
-    // for each event and each cluster. Each event is independent,
-    // so the events are distributed to different blocks 
-    // (and hence different multiprocessors)
+  // do initial regrouping
+  // Regrouping means calculate a cluster membership probability
+  // for each event and each cluster. Each event is independent,
+  // so the events are distributed to different blocks 
+  // (and hence different multiprocessors)
 
   //================================== EM INITIALIZE =======================
 
-    estep1_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods,num_clusters);
-    //cudaThreadSynchronize();
+  estep1_launch(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
+  //cudaThreadSynchronize();
 
-    estep2_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);
+  estep2_launch(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
+  cudaThreadSynchronize();
+
+  // check if kernel execution generated an error
+  CUT_CHECK_ERROR("Kernel execution failed");
+
+  // Copy the likelihood totals from each block, sum them up to get a total
+  CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS_ESTEP,cudaMemcpyDeviceToHost));
+  likelihood = 0.0;
+  for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
+    likelihood += likelihoods[i]; 
+  }
+  //printf("Starter Likelihood: %e\n",likelihood);
+
+  float change = epsilon*2;
+
+  //================================= EM BEGIN ==================================
+  //printf("Performing EM algorithm on %d clusters.\n",num_clusters);
+  iters = 0;
+
+  // This is the iterative loop for the EM algorithm.
+  // It re-estimates parameters, re-computes constants, and then regroups the events
+  // These steps keep repeating until the change in likelihood is less than some epsilon        
+  while(iters < MIN_ITERS || (iters < MAX_ITERS && fabs(change) > epsilon)) {
+    old_likelihood = likelihood;
+            
+    //params = M step
+    // This kernel computes a new N, pi isn't updated until compute_constants though
+    mstep_N_launch(d_fcs_data_by_event,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events);
     cudaThreadSynchronize();
 
+    // This kernel computes new means
+    mstep_means_launch(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events);
+    cudaThreadSynchronize();
+            
+#if ENABLE_CODEVAR_2B_BUFFER_ALLOC
+    CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_clusters, cudaMemcpyHostToDevice) );
+#endif
+    // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per cluster
+    mstep_covar_launch_${version_suffix}(d_fcs_data_by_dimension,d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events,temp_buffer_2b);
+    cudaThreadSynchronize();
+                 
+    CUT_CHECK_ERROR("M-step Kernel execution failed: ");
+
+
+    // Inverts the R matrices, computes the constant, normalizes cluster probabilities
+    constants_kernel_launch(d_clusters,num_clusters,num_dimensions);
+    cudaThreadSynchronize();
+    CUT_CHECK_ERROR("Constants Kernel execution failed: ");
+
+    //regroup = E step
+    // Compute new cluster membership probabilities for all the events
+    estep1_launch(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
+
+    estep2_launch(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
+    cudaThreadSynchronize();
+
+    CUT_CHECK_ERROR("E-step Kernel execution failed: ");
+        
     // check if kernel execution generated an error
     CUT_CHECK_ERROR("Kernel execution failed");
-
-    // Copy the likelihood totals from each block, sum them up to get a total
+        
     CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS_ESTEP,cudaMemcpyDeviceToHost));
     likelihood = 0.0;
     for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
-     likelihood += likelihoods[i]; 
+      likelihood += likelihoods[i]; 
     }
-    //printf("Starter Likelihood: %e\n",likelihood);
-
-    float change = epsilon*2;
-
-    //================================= EM BEGIN ==================================
-    //printf("Performing EM algorithm on %d clusters.\n",num_clusters);
-    iters = 0;
-
-    // This is the iterative loop for the EM algorithm.
-    // It re-estimates parameters, re-computes constants, and then regroups the events
-    // These steps keep repeating until the change in likelihood is less than some epsilon        
-    while(iters < MIN_ITERS || (iters < MAX_ITERS && fabs(change) > epsilon)) {
-      old_likelihood = likelihood;
             
-      //params = M step
-      // This kernel computes a new N, pi isn't updated until compute_constants though
-      mstep_N_launch(d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events);
-      cudaThreadSynchronize();
+    change = likelihood - old_likelihood;
+    //printf("Iter %d likelihood = %f\n", iters, likelihood);
+    //printf("Change in likelihood: %f (vs. %f)\n",change, epsilon);
 
-      // This kernel computes new means
-      mstep_means_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events);
-      cudaThreadSynchronize();
-            
-#if ENABLE_CODEVAR_2B_BUFFER_ALLOC
-      CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_clusters, cudaMemcpyHostToDevice) );
-#endif
-      // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per cluster
-      mstep_covar_launch_${version_suffix}(d_fcs_data_by_dimension,d_fcs_data_by_event,d_clusters,num_dimensions,num_clusters,num_events,temp_buffer_2b);
-      cudaThreadSynchronize();
-                 
-      CUT_CHECK_ERROR("M-step Kernel execution failed: ");
+    iters++;
 
-
-      // Inverts the R matrices, computes the constant, normalizes cluster probabilities
-      constants_kernel_launch(d_clusters,num_clusters,num_dimensions);
-      cudaThreadSynchronize();
-      CUT_CHECK_ERROR("Constants Kernel execution failed: ");
-
-      //regroup = E step
-      // Compute new cluster membership probabilities for all the events
-      estep1_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_events,d_likelihoods,num_clusters);
-
-      estep2_launch(d_fcs_data_by_dimension,d_clusters,num_dimensions,num_clusters,num_events,d_likelihoods);
-      cudaThreadSynchronize();
-
-      CUT_CHECK_ERROR("E-step Kernel execution failed: ");
+  }//EM Loop
         
-      // check if kernel execution generated an error
-      CUT_CHECK_ERROR("Kernel execution failed");
-        
-      CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS_ESTEP,cudaMemcpyDeviceToHost));
-      likelihood = 0.0;
-      for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
-        likelihood += likelihoods[i]; 
-      }
-            
-      change = likelihood - old_likelihood;
-      //printf("Iter %d likelihood = %f\n", iters, likelihood);
-      //printf("Change in likelihood: %f (vs. %f)\n",change, epsilon);
-
-      iters++;
-
-    }//EM Loop
-        
-    // copy clusters from the device
-    CUDA_SAFE_CALL(cudaMemcpy(&temp_clusters, d_clusters, sizeof(clusters_t),cudaMemcpyDeviceToHost));
-    // copy all of the arrays from the structs
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.N, temp_clusters.N, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.pi, temp_clusters.pi, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.constant, temp_clusters.constant, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.avgvar, temp_clusters.avgvar, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.means, temp_clusters.means, sizeof(float)*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.R, temp_clusters.R, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.Rinv, temp_clusters.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
-    CUDA_SAFE_CALL(cudaMemcpy(clusters.memberships, temp_clusters.memberships, sizeof(float)*num_events*num_clusters,cudaMemcpyDeviceToHost));
-        
-    //} // outer loop from M to 1 clusters
-
-  // ret.N_p = pyublas::numpy_array<float>(num_clusters);       
-  // std::copy( clusters.N, clusters.N+num_clusters, ret.N_p.begin());
-
-  // ret.pi = pyublas::numpy_array<float>(num_clusters);       
-  // std::copy( clusters.pi, clusters.pi+num_clusters, ret.pi.begin());
-
-  // ret.constant = pyublas::numpy_array<float>(num_clusters);       
-  // std::copy( clusters.constant, clusters.constant+num_clusters, ret.constant.begin());
-
-  // ret.avgvar = pyublas::numpy_array<float>(num_clusters);       
-  // std::copy( clusters.avgvar, clusters.avgvar+num_clusters, ret.avgvar.begin());
-
-  // ret.means = pyublas::numpy_array<float>(num_dimensions*num_clusters);
-  // std::copy( clusters.means, clusters.means+num_dimensions*num_clusters, ret.means.begin());
-
-  // ret.R = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);
-  // std::copy( clusters.R, clusters.R+num_dimensions*num_dimensions*num_clusters, ret.R.begin());
-
-  // ret.Rinv = pyublas::numpy_array<float>(num_dimensions*num_dimensions*num_clusters);    
-  // std::copy( clusters.Rinv, clusters.Rinv+num_dimensions*num_dimensions*num_clusters, ret.Rinv.begin());
+ //} // outer loop from M to 1 clusters
 
 
   //================================ EM DONE ==============================
@@ -343,34 +230,184 @@ boost::python::object train (
   //printf("DONE COMPUTING\n");
  
   // cleanup host memory
-  //free(fcs_data_by_event); NOW OWNED BY PYTHON!
-  free(fcs_data_by_dimension);
-  // free(clusters.N);
-  // free(clusters.pi);
-  // free(clusters.constant);
-  // free(clusters.avgvar);
-  // free(clusters.means);
-  // free(clusters.R);
-  // free(clusters.Rinv);
-  // free(clusters.memberships);
 
-  free(saved_clusters.N);
-  free(saved_clusters.pi);
-  free(saved_clusters.constant);
-  free(saved_clusters.avgvar);
-  free(saved_clusters.means);
-  free(saved_clusters.R);
-  free(saved_clusters.Rinv);
-  free(saved_clusters.memberships);
-    
+
   free(likelihoods);
-
+  free(cluster_memberships);
+  
+  /* free(saved_clusters.N); */
+  /* free(saved_clusters.pi); */
+  /* free(saved_clusters.constant); */
+  /* free(saved_clusters.avgvar); */
+  /* free(saved_clusters.means); */
+  /* free(saved_clusters.R); */
+  /* free(saved_clusters.Rinv); */
+  /* //free(saved_clusters.memberships); */
+    
+ 
   // cleanup GPU memory
   CUDA_SAFE_CALL(cudaFree(d_likelihoods));
+  CUDA_SAFE_CALL(cudaFree(d_cluster_memberships));
+
+  return boost::python::object(boost::python::ptr(&clusters));
+  //return &clusters;
+}
+// ================== Event data allocation on CPU  ================= :
+void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events, int num_dimensions) {
+  
+  fcs_data_by_event = input_data.data();
+  // Transpose the event data (allows coalesced access pattern in E-step kernel)
+  // This has consecutive values being from the same dimension of the data 
+  // (num_dimensions by num_events matrix)
+  fcs_data_by_dimension  = (float*) malloc(sizeof(float)*num_events*num_dimensions);
+
+  for(int e=0; e<num_events; e++) {
+    for(int d=0; d<num_dimensions; d++) {
+      fcs_data_by_dimension[d*num_events+e] = fcs_data_by_event[e*num_dimensions+d];
+    }
+  }
+  return;
+}
+
+// ================== Event data allocation on GPU  ================= :
+
+void alloc_events_on_GPU(int num_dimensions, int num_events) {
+  int mem_size = num_dimensions*num_events*sizeof(float);
+    
+  // allocate device memory for FCS data
+  CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_event, mem_size));
+  CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_dimension, mem_size));
+
+  return;
+}
+
+
+// ================== Cluster data allocation on CPU  ================= :
+
+void alloc_clusters_on_CPU(int original_num_clusters, int num_dimensions, pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
+                           
+  
+  //clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
+  //clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);   
+  //clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
+  clusters.pi = weights.data();
+  clusters.means = means.data();
+  clusters.R = covars.data();
+
+  clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);      
+  clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
+  clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters);
+  clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
  
+  return;
+}  
+
+// ================== Cluster data allocation on GPU  ================= :
+void alloc_clusters_on_GPU(int original_num_clusters, int num_dimensions) {
+
+  // Setup the cluster data structures on device
+  // First allocate structures on the host, CUDA malloc the arrays
+  // Then CUDA malloc structures on the device and copy them over
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.N),sizeof(float)*original_num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.pi),sizeof(float)*original_num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.constant),sizeof(float)*original_num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.avgvar),sizeof(float)*original_num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.means),sizeof(float)*num_dimensions*original_num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.R),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.Rinv),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
+   
+  // Allocate a struct on the device 
+  CUDA_SAFE_CALL(cudaMalloc((void**) &d_clusters, sizeof(clusters_t)));
+    
+  // Copy Cluster data to device
+  CUDA_SAFE_CALL(cudaMemcpy(d_clusters,&temp_clusters,sizeof(clusters_t),cudaMemcpyHostToDevice));
+
+  return;
+}
+
+// ======================== Copy event data from CPU to GPU ================
+void copy_event_data_CPU_to_GPU(int num_events, int num_dimensions) {
+  int mem_size = num_dimensions*num_events*sizeof(float);
+  // copy FCS to device
+  CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_event, fcs_data_by_event, mem_size,cudaMemcpyHostToDevice) );
+  CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_dimension, fcs_data_by_dimension, mem_size,cudaMemcpyHostToDevice) );
+  return;
+}
+
+// ======================== Copy cluster data from CPU to GPU ================
+void copy_cluster_data_CPU_to_GPU(int num_clusters, int num_dimensions) {
+  // copy clusters from the device
+  CUDA_SAFE_CALL(cudaMemcpy(&temp_clusters, d_clusters, sizeof(clusters_t),cudaMemcpyDeviceToHost));
+  // copy all of the arrays from the structs
+  CUDA_SAFE_CALL(cudaMemcpy(clusters.N, temp_clusters.N, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(clusters.pi, temp_clusters.pi, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(clusters.constant, temp_clusters.constant, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(clusters.avgvar, temp_clusters.avgvar, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(clusters.means, temp_clusters.means, sizeof(float)*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(clusters.R, temp_clusters.R, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(clusters.Rinv, temp_clusters.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
+  
+  return;
+}
+
+// ================== Set the GPU Device ===================
+void set_GPU_device(int device) {
+  // Set the device to run on... 0 for GTX 480, 1 for GTX 285 on oak
+  int GPUCount;
+  CUDA_SAFE_CALL(cudaGetDeviceCount(&GPUCount));
+  if(GPUCount == 0) {
+    //printf("Only 1 CUDA device found, defaulting to it.\n");
+    device = 0;
+  } else if (GPUCount >= 1 && device >= 0) {
+    //printf("Multiple CUDA devices found, selecting device based on user input: %d\n",device);
+  } else if(GPUCount >= 1 && DEVICE < GPUCount) {
+    //printf("Multiple CUDA devices found, selecting based on compiled default: %d\n",DEVICE);
+    device = DEVICE;
+  } else {
+    //printf("Fatal Error: Unable to set device to %d, not enough GPUs.\n",DEVICE);
+    exit(2);
+  }
+  CUDA_SAFE_CALL(cudaSetDevice(device));
+    
+  cudaDeviceProp prop;
+  cudaGetDeviceProperties(&prop, device);
+  //printf("\nUsing device - %s\n\n", prop.name);
+
+  return;
+}
+
+
+// ================== Event data allocation on CPU  ================= :
+void dealloc_events_on_CPU() {
+  //free(fcs_data_by_event);
+  free(fcs_data_by_dimension);
+  return;
+}
+
+// ================== Event data allocation on GPU  ================= :
+void dealloc_events_on_GPU() {
   CUDA_SAFE_CALL(cudaFree(d_fcs_data_by_event));
   CUDA_SAFE_CALL(cudaFree(d_fcs_data_by_dimension));
+  return;
+}
 
+
+// ==================== Cluster data deallocation on CPU =================  
+void dealloc_clusters_on_CPU() {
+
+  //free(clusters.pi);
+  //free(clusters.means);
+  //free(clusters.R);
+
+  free(clusters.N);
+  free(clusters.constant);
+  free(clusters.avgvar);
+  free(clusters.Rinv);
+  return;
+}
+
+// ==================== Cluster data deallocation on GPU =================  
+void dealloc_clusters_on_GPU() {
   CUDA_SAFE_CALL(cudaFree(temp_clusters.N));
   CUDA_SAFE_CALL(cudaFree(temp_clusters.pi));
   CUDA_SAFE_CALL(cudaFree(temp_clusters.constant));
@@ -378,40 +415,40 @@ boost::python::object train (
   CUDA_SAFE_CALL(cudaFree(temp_clusters.means));
   CUDA_SAFE_CALL(cudaFree(temp_clusters.R));
   CUDA_SAFE_CALL(cudaFree(temp_clusters.Rinv));
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.memberships));
+  
   CUDA_SAFE_CALL(cudaFree(d_clusters));
 
-  return boost::python::object(boost::python::ptr(&clusters));
-  //return &clusters;
+  return;
 }
+
+
 
 // Accessor functions for pi, means and covar
 
 pyublas::numpy_array<float> get_pi(clusters_t* c, int M){
-    pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(M);
-    std::copy( c->pi, c->pi+M, ret.begin());
-    return ret;
+  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(M);
+  std::copy( c->pi, c->pi+M, ret.begin());
+  return ret;
 }
 
 pyublas::numpy_array<float> get_means(clusters_t* c, int M, int D){
-    pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*M);
-    std::copy( c->means, c->means+D*M, ret.begin());
-    return ret;
+  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*M);
+  std::copy( c->means, c->means+D*M, ret.begin());
+  return ret;
 }
 
 pyublas::numpy_array<float> get_covars(clusters_t* c, int M, int D){
-    pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*D*M);
-    std::copy( c->R, c->R+D*D*M, ret.begin());
-    return ret;
+  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*D*M);
+  std::copy( c->R, c->R+D*D*M, ret.begin());
+  return ret;
 }
 
 //------------------------- AHC FUNCTIONS ----------------------------
 //int merge_2_closest_clusters(int num_clusters, int num_dimensions, int num_events, clusters_t *clusters) {
 boost::python::object merge_2_closest_clusters(clusters_t* clusters,
-                                        int num_clusters,   
-                                        int num_dimensions,         
-                                        int num_events  
-                                        ) { 
+                                               int num_clusters,   
+                                               int num_dimensions         
+                                               ) { 
                                           
   int min_c1, min_c2;
   float distance, min_distance = 0.0;
@@ -426,7 +463,7 @@ boost::python::object merge_2_closest_clusters(clusters_t* clusters,
   scratch_cluster.means = (float*) malloc(sizeof(float)*num_dimensions);
   scratch_cluster.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
   scratch_cluster.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
-  scratch_cluster.memberships = (float*) malloc(sizeof(float)*num_events);
+  //  scratch_cluster.memberships = (float*) malloc(sizeof(float)*num_events);
 
   
   // First eliminate any "empty" clusters 
@@ -480,7 +517,7 @@ boost::python::object merge_2_closest_clusters(clusters_t* clusters,
   free(scratch_cluster.means);
   free(scratch_cluster.R);
   free(scratch_cluster.Rinv);
-  free(scratch_cluster.memberships);
+  //free(scratch_cluster.memberships);
 
   return boost::python::object(boost::python::ptr(clusters));
   //return boost::python::object(clusters); 
@@ -510,12 +547,12 @@ void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster
     for(int j=i; j<num_dimensions; j++) {
       // Compute R contribution from cluster1
       temp_cluster->R[i*num_dimensions+j] = ((temp_cluster->means[i]-clusters->means[c1*num_dimensions+i])
-                                            *(temp_cluster->means[j]-clusters->means[c1*num_dimensions+j])
-                                            +clusters->R[c1*num_dimensions*num_dimensions+i*num_dimensions+j])*wt1;
+                                             *(temp_cluster->means[j]-clusters->means[c1*num_dimensions+j])
+                                             +clusters->R[c1*num_dimensions*num_dimensions+i*num_dimensions+j])*wt1;
       // Add R contribution from cluster2
       temp_cluster->R[i*num_dimensions+j] += ((temp_cluster->means[i]-clusters->means[c2*num_dimensions+i])
-                                             *(temp_cluster->means[j]-clusters->means[c2*num_dimensions+j])
-                                             +clusters->R[c2*num_dimensions*num_dimensions+i*num_dimensions+j])*wt2;
+                                              *(temp_cluster->means[j]-clusters->means[c2*num_dimensions+j])
+                                              +clusters->R[c2*num_dimensions*num_dimensions+i*num_dimensions+j])*wt2;
       // Because its symmetric...
       temp_cluster->R[j*num_dimensions+i] = temp_cluster->R[i*num_dimensions+j];
     }
@@ -602,66 +639,66 @@ lubksb(float *a,int n,int *indx,float *b);
  * version 1.0
  */
 void invert_cpu(float* data, int actualsize, float* log_determinant)  {
-    int maxsize = actualsize;
-    int n = actualsize;
-    *log_determinant = 0.0;
+  int maxsize = actualsize;
+  int n = actualsize;
+  *log_determinant = 0.0;
 
-    if (actualsize == 1) { // special case, dimensionality == 1
-        *log_determinant = logf(data[0]);
-        data[0] = 1.0 / data[0];
-    } else if(actualsize >= 2) { // dimensionality >= 2
-        for (int i=1; i < actualsize; i++) data[i] /= data[0]; // normalize row 0
-        for (int i=1; i < actualsize; i++)  { 
-            for (int j=i; j < actualsize; j++)  { // do a column of L
-                float sum = 0.0;
-                for (int k = 0; k < i; k++)  
-                    sum += data[j*maxsize+k] * data[k*maxsize+i];
-                data[j*maxsize+i] -= sum;
-            }
-            if (i == actualsize-1) continue;
-            for (int j=i+1; j < actualsize; j++)  {  // do a row of U
-                float sum = 0.0;
-                for (int k = 0; k < i; k++)
-                    sum += data[i*maxsize+k]*data[k*maxsize+j];
-                data[i*maxsize+j] = 
-                    (data[i*maxsize+j]-sum) / data[i*maxsize+i];
-            }
-        }
-
-        for(int i=0; i<actualsize; i++) {
-            *log_determinant += log10(fabs(data[i*n+i]));
-            //printf("log_determinant: %e\n",*log_determinant); 
-        }
-        //printf("\n\n");
-        for ( int i = 0; i < actualsize; i++ )  // invert L
-            for ( int j = i; j < actualsize; j++ )  {
-                float x = 1.0;
-                if ( i != j ) {
-                    x = 0.0;
-                    for ( int k = i; k < j; k++ ) 
-                        x -= data[j*maxsize+k]*data[k*maxsize+i];
-                }
-                data[j*maxsize+i] = x / data[j*maxsize+j];
-            }
-        for ( int i = 0; i < actualsize; i++ )   // invert U
-            for ( int j = i; j < actualsize; j++ )  {
-                if ( i == j ) continue;
-                float sum = 0.0;
-                for ( int k = i; k < j; k++ )
-                    sum += data[k*maxsize+j]*( (i==k) ? 1.0 : data[i*maxsize+k] );
-                data[i*maxsize+j] = -sum;
-            }
-        for ( int i = 0; i < actualsize; i++ )   // final inversion
-            for ( int j = 0; j < actualsize; j++ )  {
-                float sum = 0.0;
-                for ( int k = ((i>j)?i:j); k < actualsize; k++ )  
-                    sum += ((j==k)?1.0:data[j*maxsize+k])*data[k*maxsize+i];
-                data[j*maxsize+i] = sum;
-            }
-    } else {
-        printf("Error: Invalid dimensionality for invert(...)\n");
+  if (actualsize == 1) { // special case, dimensionality == 1
+    *log_determinant = logf(data[0]);
+    data[0] = 1.0 / data[0];
+  } else if(actualsize >= 2) { // dimensionality >= 2
+    for (int i=1; i < actualsize; i++) data[i] /= data[0]; // normalize row 0
+    for (int i=1; i < actualsize; i++)  { 
+      for (int j=i; j < actualsize; j++)  { // do a column of L
+        float sum = 0.0;
+        for (int k = 0; k < i; k++)  
+          sum += data[j*maxsize+k] * data[k*maxsize+i];
+        data[j*maxsize+i] -= sum;
+      }
+      if (i == actualsize-1) continue;
+      for (int j=i+1; j < actualsize; j++)  {  // do a row of U
+        float sum = 0.0;
+        for (int k = 0; k < i; k++)
+          sum += data[i*maxsize+k]*data[k*maxsize+j];
+        data[i*maxsize+j] = 
+          (data[i*maxsize+j]-sum) / data[i*maxsize+i];
+      }
     }
- }
+
+    for(int i=0; i<actualsize; i++) {
+      *log_determinant += log10(fabs(data[i*n+i]));
+      //printf("log_determinant: %e\n",*log_determinant); 
+    }
+    //printf("\n\n");
+    for ( int i = 0; i < actualsize; i++ )  // invert L
+      for ( int j = i; j < actualsize; j++ )  {
+        float x = 1.0;
+        if ( i != j ) {
+          x = 0.0;
+          for ( int k = i; k < j; k++ ) 
+            x -= data[j*maxsize+k]*data[k*maxsize+i];
+        }
+        data[j*maxsize+i] = x / data[j*maxsize+j];
+      }
+    for ( int i = 0; i < actualsize; i++ )   // invert U
+      for ( int j = i; j < actualsize; j++ )  {
+        if ( i == j ) continue;
+        float sum = 0.0;
+        for ( int k = i; k < j; k++ )
+          sum += data[k*maxsize+j]*( (i==k) ? 1.0 : data[i*maxsize+k] );
+        data[i*maxsize+j] = -sum;
+      }
+    for ( int i = 0; i < actualsize; i++ )   // final inversion
+      for ( int j = 0; j < actualsize; j++ )  {
+        float sum = 0.0;
+        for ( int k = ((i>j)?i:j); k < actualsize; k++ )  
+          sum += ((j==k)?1.0:data[j*maxsize+k])*data[k*maxsize+i];
+        data[j*maxsize+i] = sum;
+      }
+  } else {
+    printf("Error: Invalid dimensionality for invert(...)\n");
+  }
+}
 
 
 /*
@@ -669,72 +706,72 @@ void invert_cpu(float* data, int actualsize, float* log_determinant)  {
  * This was modified from the 'cluster' application by Charles A. Bouman
  */
 int invert_matrix(float* a, int n, float* determinant) {
-    int  i,j,f,g;
+  int  i,j,f,g;
    
-    float* y = (float*) malloc(sizeof(float)*n*n);
-    float* col = (float*) malloc(sizeof(float)*n);
-    int* indx = (int*) malloc(sizeof(int)*n);
-    /*
+  float* y = (float*) malloc(sizeof(float)*n*n);
+  float* col = (float*) malloc(sizeof(float)*n);
+  int* indx = (int*) malloc(sizeof(int)*n);
+  /*
     printf("\n\nR matrix before LU decomposition:\n");
     for(i=0; i<n; i++) {
-        for(j=0; j<n; j++) {
-            printf("%.2f ",a[i*n+j]);
-        }
-        printf("\n");
+    for(j=0; j<n; j++) {
+    printf("%.2f ",a[i*n+j]);
+    }
+    printf("\n");
     }*/
 
-    *determinant = 0.0;
-    if(ludcmp(a,n,indx,determinant)) {
-        printf("Determinant mantissa after LU decomposition: %f\n",*determinant);
-        printf("\n\nR matrix after LU decomposition:\n");
-        for(i=0; i<n; i++) {
-            for(j=0; j<n; j++) {
-                printf("%.2f ",a[i*n+j]);
-            }
-            printf("\n");
-        }
+  *determinant = 0.0;
+  if(ludcmp(a,n,indx,determinant)) {
+    printf("Determinant mantissa after LU decomposition: %f\n",*determinant);
+    printf("\n\nR matrix after LU decomposition:\n");
+    for(i=0; i<n; i++) {
+      for(j=0; j<n; j++) {
+        printf("%.2f ",a[i*n+j]);
+      }
+      printf("\n");
+    }
        
-      for(j=0; j<n; j++) {
-        *determinant *= a[j*n+j];
-      }
+    for(j=0; j<n; j++) {
+      *determinant *= a[j*n+j];
+    }
      
-      printf("determinant: %E\n",*determinant);
+    printf("determinant: %E\n",*determinant);
      
-      for(j=0; j<n; j++) {
-        for(i=0; i<n; i++) col[i]=0.0;
-        col[j]=1.0;
-        lubksb(a,n,indx,col);
-        for(i=0; i<n; i++) y[i*n+j]=col[i];
-      }
+    for(j=0; j<n; j++) {
+      for(i=0; i<n; i++) col[i]=0.0;
+      col[j]=1.0;
+      lubksb(a,n,indx,col);
+      for(i=0; i<n; i++) y[i*n+j]=col[i];
+    }
 
-      for(i=0; i<n; i++)
+    for(i=0; i<n; i++)
       for(j=0; j<n; j++) a[i*n+j]=y[i*n+j];
      
-      printf("\n\nMatrix at end of clust_invert function:\n");
-      for(f=0; f<n; f++) {
-          for(g=0; g<n; g++) {
-              printf("%.2f ",a[f*n+g]);
-          }
-          printf("\n");
+    printf("\n\nMatrix at end of clust_invert function:\n");
+    for(f=0; f<n; f++) {
+      for(g=0; g<n; g++) {
+        printf("%.2f ",a[f*n+g]);
       }
-      free(y);
-      free(col);
-      free(indx);
-      return(1);
+      printf("\n");
     }
-    else {
-        *determinant = 0.0;
-        free(y);
-        free(col);
-        free(indx);
-        return(0);
-    }
+    free(y);
+    free(col);
+    free(indx);
+    return(1);
+  }
+  else {
+    *determinant = 0.0;
+    free(y);
+    free(col);
+    free(indx);
+    return(0);
+  }
 }
 
 static float double_abs(float x)
 {
-       if(x<0) x = -x;
-       return(x);
+  if(x<0) x = -x;
+  return(x);
 }
 
 #define TINY 1.0e-20
@@ -742,103 +779,103 @@ static float double_abs(float x)
 static int
 ludcmp(float *a,int n,int *indx,float *d)
 {
-    int i,imax,j,k;
-    float big,dum,sum,temp;
-    float *vv;
+  int i,imax,j,k;
+  float big,dum,sum,temp;
+  float *vv;
 
-    vv= (float*) malloc(sizeof(float)*n);
+  vv= (float*) malloc(sizeof(float)*n);
    
-    *d=1.0;
+  *d=1.0;
    
-    for (i=0;i<n;i++)
+  for (i=0;i<n;i++)
     {
-        big=0.0;
-        for (j=0;j<n;j++)
-            if ((temp=fabsf(a[i*n+j])) > big)
-                big=temp;
-        if (big == 0.0)
-            return 0; /* Singular matrix  */
-        vv[i]=1.0/big;
+      big=0.0;
+      for (j=0;j<n;j++)
+        if ((temp=fabsf(a[i*n+j])) > big)
+          big=temp;
+      if (big == 0.0)
+        return 0; /* Singular matrix  */
+      vv[i]=1.0/big;
     }
        
    
-    for (j=0;j<n;j++)
+  for (j=0;j<n;j++)
     {  
-        for (i=0;i<j;i++)
+      for (i=0;i<j;i++)
         {
-            sum=a[i*n+j];
-            for (k=0;k<i;k++)
-                sum -= a[i*n+k]*a[k*n+j];
-            a[i*n+j]=sum;
+          sum=a[i*n+j];
+          for (k=0;k<i;k++)
+            sum -= a[i*n+k]*a[k*n+j];
+          a[i*n+j]=sum;
         }
        
-        /*
+      /*
         int f,g;
         printf("\n\nMatrix After Step 1:\n");
         for(f=0; f<n; f++) {
-            for(g=0; g<n; g++) {
-                printf("%.2f ",a[f*n+g]);
-            }
-            printf("\n");
+        for(g=0; g<n; g++) {
+        printf("%.2f ",a[f*n+g]);
+        }
+        printf("\n");
         }*/
        
-        big=0.0;
-        dum=0.0;
-        for (i=j;i<n;i++)
+      big=0.0;
+      dum=0.0;
+      for (i=j;i<n;i++)
         {
-            sum=a[i*n+j];
-            for (k=0;k<j;k++)
-                sum -= a[i*n+k]*a[k*n+j];
-            a[i*n+j]=sum;
-            dum=vv[i]*fabsf(sum);
-            //printf("sum: %f, dum: %f, big: %f\n",sum,dum,big);
-            //printf("dum-big: %E\n",fabs(dum-big));
-            if ( (dum-big) >= 0.0 || fabs(dum-big) < 1e-3)
+          sum=a[i*n+j];
+          for (k=0;k<j;k++)
+            sum -= a[i*n+k]*a[k*n+j];
+          a[i*n+j]=sum;
+          dum=vv[i]*fabsf(sum);
+          //printf("sum: %f, dum: %f, big: %f\n",sum,dum,big);
+          //printf("dum-big: %E\n",fabs(dum-big));
+          if ( (dum-big) >= 0.0 || fabs(dum-big) < 1e-3)
             {
-                big=dum;
-                imax=i;
-                //printf("imax: %d\n",imax);
+              big=dum;
+              imax=i;
+              //printf("imax: %d\n",imax);
             }
         }
        
-        if (j != imax)
+      if (j != imax)
         {
-            for (k=0;k<n;k++)
+          for (k=0;k<n;k++)
             {
-                dum=a[imax*n+k];
-                a[imax*n+k]=a[j*n+k];
-                a[j*n+k]=dum;
+              dum=a[imax*n+k];
+              a[imax*n+k]=a[j*n+k];
+              a[j*n+k]=dum;
             }
-            *d = -(*d);
-            vv[imax]=vv[j];
+          *d = -(*d);
+          vv[imax]=vv[j];
         }
-        indx[j]=imax;
+      indx[j]=imax;
        
-        /*
+      /*
         printf("\n\nMatrix after %dth iteration of LU decomposition:\n",j);
         for(f=0; f<n; f++) {
-            for(g=0; g<n; g++) {
-                printf("%.2f ",a[f][g]);
-            }
-            printf("\n");
+        for(g=0; g<n; g++) {
+        printf("%.2f ",a[f][g]);
+        }
+        printf("\n");
         }
         printf("imax: %d\n",imax);
-        */
+      */
 
 
-        /* Change made 3/27/98 for robustness */
-        if ( (a[j*n+j]>=0)&&(a[j*n+j]<TINY) ) a[j*n+j]= TINY;
-        if ( (a[j*n+j]<0)&&(a[j*n+j]>-TINY) ) a[j*n+j]= -TINY;
+      /* Change made 3/27/98 for robustness */
+      if ( (a[j*n+j]>=0)&&(a[j*n+j]<TINY) ) a[j*n+j]= TINY;
+      if ( (a[j*n+j]<0)&&(a[j*n+j]>-TINY) ) a[j*n+j]= -TINY;
 
-        if (j != n-1)
+      if (j != n-1)
         {
-            dum=1.0/(a[j*n+j]);
-            for (i=j+1;i<n;i++)
-                a[i*n+j] *= dum;
+          dum=1.0/(a[j*n+j]);
+          for (i=j+1;i<n;i++)
+            a[i*n+j] *= dum;
         }
     }
-    free(vv);
-    return(1);
+  free(vv);
+  return(1);
 }
 
 #undef TINY
@@ -846,28 +883,28 @@ ludcmp(float *a,int n,int *indx,float *d)
 static void
 lubksb(float *a,int n,int *indx,float *b)
 {
-    int i,ii,ip,j;
-    float sum;
+  int i,ii,ip,j;
+  float sum;
 
-    ii = -1;
-    for (i=0;i<n;i++)
+  ii = -1;
+  for (i=0;i<n;i++)
     {
-        ip=indx[i];
-        sum=b[ip];
-        b[ip]=b[i];
-        if (ii >= 0)
-            for (j=ii;j<i;j++)
-                sum -= a[i*n+j]*b[j];
-        else if (sum)
-            ii=i;
-        b[i]=sum;
+      ip=indx[i];
+      sum=b[ip];
+      b[ip]=b[i];
+      if (ii >= 0)
+        for (j=ii;j<i;j++)
+          sum -= a[i*n+j]*b[j];
+      else if (sum)
+        ii=i;
+      b[i]=sum;
     }
-    for (i=n-1;i>=0;i--)
+  for (i=n-1;i>=0;i--)
     {
-        sum=b[i];
-        for (j=i+1;j<n;j++)
-            sum -= a[i*n+j]*b[j];
-        b[i]=sum/a[i*n+i];
+      sum=b[i];
+      for (j=i+1;j<n;j++)
+        sum -= a[i*n+j]*b[j];
+      b[i]=sum/a[i*n+i];
     }
 }
 

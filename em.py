@@ -1,4 +1,5 @@
 import numpy as np
+from numpy.random import *
 import asp.codegen.templating.template as AspTemplate
 import asp.jit.asp_module as asp_module
 from codepy.cgen import *
@@ -8,12 +9,93 @@ import sys
 from imp import find_module
 from os.path import join
 
+class Clusters(object):
+    
+    def __init__(self, M, D, weights = None, means = None, covars = None):
+
+        # self.weights = np.array([], dtype=np.float32)
+        # self.means = np.array([], dtype=np.float32)
+        # self.covars = np.array([], dtype=np.float32)
+
+        print "IN INIT CLUSTERS!!!!"
+        
+        self.weights = np.empty(M, dtype=np.float32)
+        self.means = np.empty(M*D, dtype=np.float32)
+        self.covars = np.empty(M*D*D, dtype=np.float32)
+
+        # if weights is None:
+        #     self.weights = self.init_random_weights(M)
+        # else:
+        #     self.weights = weights.copy(deep=True)    
+            
+        # if means is None:
+        #     self.means = self.init_random_means(M, D)
+        # else:
+        #     self.means = means.copy(deep=True)
+                    
+        # if covars is None:
+        #     self.covars = self.init_random_covars(M, D)
+        # else:
+        #     self.covars = covars.copy(deep=True)
+
+    def init_random_weights(self, M):
+        return numpy.random.random((M))
+
+    def init_random_means(self, M, D):
+        return numpy.random.random((M,D))
+
+    def init_random_covars(self, M, D):
+        return numpy.random.random((M, D, D))
+
+
 class GMM(object):
-    def __init__(self, M, D, N, version_in):
+    
+    # flags to keep track of memory allocation
+    event_data_gpu_copy = None
+    cluster_data_gpu_copy = None
+
+    def internal_alloc_event_data(self, X):
+        #TODO: test for not null
+        #if not X.any(): return
+        if self.event_data_gpu_copy != X:
+            if self.event_data_gpu_copy:
+                self.internal_free_event_data()
+            self.aspmod.alloc_events_on_CPU(X, X.shape[0], X.shape[1])
+            self.aspmod.alloc_events_on_GPU(X.shape[0], X.shape[1])
+            self.aspmod.copy_event_data_CPU_to_GPU(X.shape[0], X.shape[1])
+            self.event_data_gpu_copy = X
+
+    def internal_free_event_data(self):
+        if self.event_data_gpu_copy:
+            self.aspmod.dealloc_events_on_CPU()
+            self.aspmod.dealloc_events_on_GPU()
+            self.event_data_gpu_copy = None
+
+    def internal_alloc_cluster_data(self):
+
+        #TODO: test for not null
+        #if not self.clusters.weights.size: return
+
+        if self.cluster_data_gpu_copy != self.clusters:
+            if self.cluster_data_gpu_copy:
+                self.internal_free_cluster_data()
+            self.aspmod.alloc_clusters_on_CPU(self.M, self.D, self.clusters.weights, self.clusters.means, self.clusters.covars)
+            self.aspmod.alloc_clusters_on_GPU(self.M, self.D)
+            self.aspmod.copy_cluster_data_CPU_to_GPU(self.M, self.D)
+            self.cluster_data_gpu_copy = self.clusters
+            
+    def internal_free_cluster_data(self):
+        if self.cluster_data_gpu_copy:
+            self.aspmod.dealloc_clusters_on_CPU()
+            self.aspmod.dealloc_clusters_on_GPU()
+            self.cluster_data_gpu_copy = None
+
+    def __init__(self, M, D, version_in, means=None, covars=None, weights=None):
         self.M = M
         self.D = D
-        self.N = N
-        
+
+        self.clusters = Clusters(M, D, weights, means, covars)
+            
         version_suffix_list = ['CODEVAR_1A', 'CODEVAR_2A', 'CODEVAR_2B', 'CODEVAR_3A']
         version_suffix_mapping = {'1' : 'CODEVAR_1A', 
                                   '2' : 'CODEVAR_2A',
@@ -64,10 +146,28 @@ class GMM(object):
         #TODO: Change variant selection to key off of parameter values as well as fname
         self.aspmod.add_function(c_main_rend, fname="train")
 
+        # Add set GPU device function
+        self.aspmod.add_function("", fname="set_GPU_device")
+        
+        # Add malloc and copy functions
+        self.aspmod.add_function("", fname="alloc_events_on_CPU")
+        self.aspmod.add_function("", fname="alloc_events_on_GPU")
+        self.aspmod.add_function("", fname="alloc_clusters_on_CPU")
+        self.aspmod.add_function("", fname="alloc_clusters_on_GPU")
+        
+        self.aspmod.add_function("", fname="copy_event_data_CPU_to_GPU")
+        self.aspmod.add_function("", fname="copy_cluster_data_CPU_to_GPU")
+
+        # Add dealloc functions
+        self.aspmod.add_function("", fname="dealloc_events_on_CPU")
+        self.aspmod.add_function("", fname="dealloc_events_on_GPU")
+        self.aspmod.add_function("", fname="dealloc_clusters_on_CPU")
+        self.aspmod.add_function("", fname="dealloc_clusters_on_GPU")
+        
         # Add getter functions
-        self.aspmod.add_function("", fname="get_pi")
-        self.aspmod.add_function("", fname="get_means")
-        self.aspmod.add_function("", fname="get_covars")
+        # self.aspmod.add_function("", fname="get_pi")
+        # self.aspmod.add_function("", fname="get_means")
+        # self.aspmod.add_function("", fname="get_covars")
         
         # Add merge clusters function
         self.aspmod.add_function("", fname="merge_2_closest_clusters")
@@ -85,19 +185,19 @@ class GMM(object):
                 float* means;   // Spectral mean for the cluster: [M*D]
                 float* R;      // Covariance matrix: [M*D*D]
                 float* Rinv;   // Inverse of covariance matrix: [M*D*D]
-                float* memberships; // Fuzzy memberships: [N*M]
             } clusters_t;"""
+
         cuda_launch_decls ="""
             void seed_clusters_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int original_num_clusters, int num_events);
             void constants_kernel_launch(clusters_t* d_clusters, int original_num_clusters, int num_dimensions);
-            void estep1_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters);
-            void estep2_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods);
-            void mstep_N_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events);
-            void mstep_means_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events);
-            void mstep_covar_launch_CODEVAR_1A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
-            void mstep_covar_launch_CODEVAR_2A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
-            void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
-            void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            void estep1_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters);
+            void estep2_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods);
+            void mstep_N_launch(float* d_fcs_data_by_event, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events);
+            void mstep_means_launch(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events);
+            void mstep_covar_launch_CODEVAR_1A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            void mstep_covar_launch_CODEVAR_2A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
+            void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
             """
         self.aspmod.add_to_preamble([Line(cluster_t_decl)])
         self.aspmod.add_to_preamble([Line(cuda_launch_decls)])
@@ -112,15 +212,15 @@ class GMM(object):
         #Add Boost.Python registration of container class used to return data
         #TODO: Allow more than one mixture to be returned
         #TODO: Allow pointers to GPU data to be returned
-        self.aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
-            .def(pyublas::by_value_rw_member( "N_p", &return_array_container::N_p))
-            .def(pyublas::by_value_rw_member( "pi", &return_array_container::pi))
-            .def(pyublas::by_value_rw_member( "constant", &return_array_container::constant))
-            .def(pyublas::by_value_rw_member( "avgvar", &return_array_container::avgvar)) 
-            .def(pyublas::by_value_rw_member( "means", &return_array_container::means))
-            .def(pyublas::by_value_rw_member( "R", &return_array_container::R))
-            .def(pyublas::by_value_rw_member( "Rinv", &return_array_container::Rinv)) ;
-            boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
+        # self.aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
+        #     .def(pyublas::by_value_rw_member( "N_p", &return_array_container::N_p))
+        #     .def(pyublas::by_value_rw_member( "pi", &return_array_container::pi))
+        #     .def(pyublas::by_value_rw_member( "constant", &return_array_container::constant))
+        #     .def(pyublas::by_value_rw_member( "avgvar", &return_array_container::avgvar)) 
+        #     .def(pyublas::by_value_rw_member( "means", &return_array_container::means))
+        #     .def(pyublas::by_value_rw_member( "R", &return_array_container::R))
+        #     .def(pyublas::by_value_rw_member( "Rinv", &return_array_container::Rinv)) ;
+        #     boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
         
         self.aspmod.add_to_init("""boost::python::class_<clusters_struct>("Clusters");
             boost::python::scope().attr("clusters") = boost::python::object(boost::python::ptr(&clusters));""")
@@ -151,35 +251,49 @@ class GMM(object):
         #print self.aspmod.module.generate()
         self.aspmod.compile()
 
-
+        
     def train_using_python(self, input_data):
         from scikits.learn import mixture
         clf = mixture.GMM(n_states=self.M, cvtype='full')
         clf.fit(input_data)
         return clf.means, clf.covars
 
+
+    
     def train(self, input_data):
         N = input_data.shape[0] #TODO: handle types other than np.array?
         D = input_data.shape[1]
-        self.clusters = self.aspmod.train( 0, self.M, D, N, input_data)
-        return self.clusters
+
+        print "IN TRAIN!!!!"
+        
+        self.aspmod.set_GPU_device(0);
+
+        print "BEFORE ALLOC EVENTS!!!"
+        self.internal_alloc_event_data(input_data)
+
+        print "BEFORE ALLOC CLUSTERS!!!"
+        self.internal_alloc_cluster_data()
+
+        print "BEFORE TRAIN!!!"
+        self.aspmod.train(self.M, D, N, input_data)
+        return 
 
     def merge_2_closest_clusters(self):
-        self.clusters = self.aspmod.merge_2_closest_clusters(self.clusters, self.M, self.D, self.N)
+        self.aspmod.merge_2_closest_clusters(self.clusters, self.M, self.D)
         self.M -= 1
-        return self.clusters
+        return 
 
-    def get_pi(self):
-        pi = self.aspmod.get_pi(self.clusters, self.M)
-        return pi
+    # def get_pi(self):
+    #     pi = self.aspmod.get_pi(self.clusters, self.M)
+    #     return pi
     
-    def get_means(self):
-        means = self.aspmod.get_means(self.clusters, self.M, self.D).reshape((self.M, self.D))
-        return means
+    # def get_means(self):
+    #     means = self.aspmod.get_means(self.clusters, self.M, self.D).reshape((self.M, self.D))
+    #     return means
     
-    def get_covars(self):
-        covars1 = self.aspmod.get_covars(self.clusters, self.M, self.D).reshape((self.M, self.D, self.D))
-        return covars1
+    # def get_covars(self):
+    #     covars1 = self.aspmod.get_covars(self.clusters, self.M, self.D).reshape((self.M, self.D, self.D))
+    #     return covars1
     
 
 

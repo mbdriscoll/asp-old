@@ -15,7 +15,7 @@ class EMTester(object):
         self.D = D
         N = 600
 
-        self.gmm = GMM(M, D, N, version_in)
+        self.gmm = GMM(M, D, version_in)
 
         self.results = {}
         #self.merge_results = {}
@@ -35,15 +35,15 @@ class EMTester(object):
 
     def test_generated(self):        
         clusters = self.gmm.train(self.X)
-        means = self.gmm.get_means()
-        covars = self.gmm.get_covars()
+        means = self.gmm.clusters.means.reshape((self.M, self.D))
+        covars = self.gmm.clusters.covars.reshape((self.M, self.D, self.D))
         self.results['ASP v'+self.version_in] = ('312', means, covars)
         return means, covars
         
     def merge_clusters(self):
         clusters = self.gmm.merge_2_closest_clusters()
-        means = self.gmm.get_means()
-        covars = self.gmm.get_covars()
+        means = self.gmm.clusters.means
+        covars = self.gmm.clusters.covars
         self.results['MERGE ASP v'+self.version_in] = ('313', means, covars)
         return means, covars
         
@@ -73,6 +73,6 @@ class EMTester(object):
 if __name__ == '__main__':
     emt = EMTester(sys.argv[1], 2, 2)
     emt.test_train()
-    emt.test_merge()
+    #emt.test_merge()
     emt.plot()
      
