@@ -16,8 +16,6 @@ class Clusters(object):
         # self.weights = np.array([], dtype=np.float32)
         # self.means = np.array([], dtype=np.float32)
         # self.covars = np.array([], dtype=np.float32)
-
-        print "IN INIT CLUSTERS!!!!"
         
         self.weights = np.empty(M, dtype=np.float32)
         self.means = np.empty(M*D, dtype=np.float32)
@@ -66,7 +64,7 @@ class GMM(object):
             self.event_data_gpu_copy = X
 
     def internal_free_event_data(self):
-        if self.event_data_gpu_copy:
+        #if self.event_data_gpu_copy:
             self.aspmod.dealloc_events_on_CPU()
             self.aspmod.dealloc_events_on_GPU()
             self.event_data_gpu_copy = None
@@ -85,7 +83,7 @@ class GMM(object):
             self.cluster_data_gpu_copy = self.clusters
             
     def internal_free_cluster_data(self):
-        if self.cluster_data_gpu_copy:
+        #if self.cluster_data_gpu_copy:
             self.aspmod.dealloc_clusters_on_CPU()
             self.aspmod.dealloc_clusters_on_GPU()
             self.cluster_data_gpu_copy = None
@@ -154,22 +152,26 @@ class GMM(object):
         self.aspmod.add_function("", fname="alloc_events_on_GPU")
         self.aspmod.add_function("", fname="alloc_clusters_on_CPU")
         self.aspmod.add_function("", fname="alloc_clusters_on_GPU")
+        #self.aspmod.add_function("", fname="alloc_temp_cluster_on_CPU")
         
         self.aspmod.add_function("", fname="copy_event_data_CPU_to_GPU")
         self.aspmod.add_function("", fname="copy_cluster_data_CPU_to_GPU")
+        self.aspmod.add_function("", fname="copy_cluster_data_GPU_to_CPU")
 
         # Add dealloc functions
         self.aspmod.add_function("", fname="dealloc_events_on_CPU")
         self.aspmod.add_function("", fname="dealloc_events_on_GPU")
         self.aspmod.add_function("", fname="dealloc_clusters_on_CPU")
         self.aspmod.add_function("", fname="dealloc_clusters_on_GPU")
+        #self.aspmod.add_function("", fname="dealloc_temp_cluster_on_CPU")
         
         # Add getter functions
-        # self.aspmod.add_function("", fname="get_pi")
-        # self.aspmod.add_function("", fname="get_means")
-        # self.aspmod.add_function("", fname="get_covars")
+        self.aspmod.add_function("", fname="get_temp_cluster_pi")
+        self.aspmod.add_function("", fname="get_temp_cluster_means")
+        self.aspmod.add_function("", fname="get_temp_cluster_covars")
         
         # Add merge clusters function
+        self.aspmod.add_function("", fname="compute_distance_riassen")
         self.aspmod.add_function("", fname="merge_2_closest_clusters")
         
 
@@ -209,22 +211,20 @@ class GMM(object):
         for x in host_system_header_names: self.aspmod.add_to_preamble([Include(x, True)])
         for x in host_project_header_names: self.aspmod.add_to_preamble([Include(x, False)])
 
-        #Add Boost.Python registration of container class used to return data
-        #TODO: Allow more than one mixture to be returned
-        #TODO: Allow pointers to GPU data to be returned
-        # self.aspmod.add_to_init("""boost::python::class_<return_array_container>("ReturnArrayContainer")
-        #     .def(pyublas::by_value_rw_member( "N_p", &return_array_container::N_p))
-        #     .def(pyublas::by_value_rw_member( "pi", &return_array_container::pi))
-        #     .def(pyublas::by_value_rw_member( "constant", &return_array_container::constant))
-        #     .def(pyublas::by_value_rw_member( "avgvar", &return_array_container::avgvar)) 
-        #     .def(pyublas::by_value_rw_member( "means", &return_array_container::means))
-        #     .def(pyublas::by_value_rw_member( "R", &return_array_container::R))
-        #     .def(pyublas::by_value_rw_member( "Rinv", &return_array_container::Rinv)) ;
-        #     boost::python::scope().attr("trained") = boost::python::object(boost::python::ptr(&ret));""")
-        
         self.aspmod.add_to_init("""boost::python::class_<clusters_struct>("Clusters");
             boost::python::scope().attr("clusters") = boost::python::object(boost::python::ptr(&clusters));""")
 
+        # self.aspmod.add_to_init("""boost::python::class_<return_cluster_container>("ReturnClusterContainer")
+        #    .def(pyublas::by_value_rw_member( "distance", &return_cluster_container::distance)) ;
+        #     boost::python::scope().attr("cluster_distance") = boost::python::object(boost::python::ptr(&ret));""")
+
+        self.aspmod.add_to_init("""boost::python::class_<return_cluster_container>("ReturnClusterContainer")
+            .def(pyublas::by_value_rw_member( "new_cluster", &return_cluster_container::cluster))
+            .def(pyublas::by_value_rw_member( "distance", &return_cluster_container::distance)) ;
+            boost::python::scope().attr("cluster_distance") = boost::python::object(boost::python::ptr(&ret));""")
+
+
+        
         # Create cuda-device module
         cuda_mod = self.aspmod.cuda_module
 
@@ -232,7 +232,7 @@ class GMM(object):
         cuda_mod.add_to_preamble([Include('stdio.h',True)])
         cuda_mod.add_to_preamble([Line(cluster_t_decl)])
         cuda_mod.add_to_module([Line(cu_kern_rend)])
-
+        
         # Setup toolchain and compile
         def pyublas_inc():
             file, pathname, descr = find_module("pyublas")
@@ -244,6 +244,7 @@ class GMM(object):
         nvcc_toolchain.cflags += ["-arch=sm_20"]
         self.aspmod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
         nvcc_toolchain.add_library("project",['.','./include'],[],[])
+
         #TODO: Get rid of awful hardcoded paths necessitaty by cutils
         self.aspmod.toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
         nvcc_toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/egonina/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
@@ -251,30 +252,25 @@ class GMM(object):
         #print self.aspmod.module.generate()
         self.aspmod.compile()
 
-        
+    def __del__(self):
+        self.internal_free_event_data()
+        self.internal_free_cluster_data()
+    
+    
     def train_using_python(self, input_data):
         from scikits.learn import mixture
         clf = mixture.GMM(n_states=self.M, cvtype='full')
         clf.fit(input_data)
         return clf.means, clf.covars
-
-
     
     def train(self, input_data):
         N = input_data.shape[0] #TODO: handle types other than np.array?
         D = input_data.shape[1]
 
-        print "IN TRAIN!!!!"
-        
         self.aspmod.set_GPU_device(0);
-
-        print "BEFORE ALLOC EVENTS!!!"
         self.internal_alloc_event_data(input_data)
-
-        print "BEFORE ALLOC CLUSTERS!!!"
         self.internal_alloc_cluster_data()
 
-        print "BEFORE TRAIN!!!"
         self.aspmod.train(self.M, D, N, input_data)
         return 
 
@@ -283,17 +279,17 @@ class GMM(object):
         self.M -= 1
         return 
 
-    # def get_pi(self):
-    #     pi = self.aspmod.get_pi(self.clusters, self.M)
-    #     return pi
-    
-    # def get_means(self):
-    #     means = self.aspmod.get_means(self.clusters, self.M, self.D).reshape((self.M, self.D))
-    #     return means
-    
-    # def get_covars(self):
-    #     covars1 = self.aspmod.get_covars(self.clusters, self.M, self.D).reshape((self.M, self.D, self.D))
-    #     return covars1
+    def compute_distance_riassen(self, c1, c2, D):
+        self.aspmod.compute_distance_riassen(c1, c2, D)
+        new_cluster = self.aspmod.compiled_module.cluster_distance.new_cluster
+        dist = self.aspmod.compiled_module.cluster_distance.distance
+        return new_cluster, dist
+
+    def get_new_cluster_means(self, new_cluster, M, D):
+        return self.aspmod.get_temp_cluster_means(new_cluster, D).reshape((M, D))
+
+    def get_new_cluster_covars(self, new_cluster, M, D):
+        return self.aspmod.get_temp_cluster_covars(new_cluster, D).reshape((M, D, D))
     
 
 

@@ -22,6 +22,16 @@
 #define ENABLE_CODEVAR_2B_BUFFER_ALLOC ${enable_2b_buffer}
 #define VERSION_SUFFIX     ${version_suffix}
 
+
+typedef struct return_cluster_container
+{
+  boost::python::object cluster;
+  pyublas::numpy_array<float> distance;
+} ret_c_con_t;
+
+ret_c_con_t ret;
+
+  
 //=== Data structure pointers ===
 
 //CPU copies of events
@@ -35,6 +45,9 @@ float* d_fcs_data_by_dimension;
 //CPU copies of clusters
 clusters_t clusters;
 clusters_t saved_clusters;
+clusters_t** scratch_cluster_arr; // for computing distances and merging
+static int num_scratch_clusters = 0;
+
 float *cluster_memberships;
 
 //GPU copies of clusters
@@ -49,6 +62,9 @@ void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int 
 void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
 float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
 //end AHC functions
+
+//one default copy function to ensure CPU clusters are up to date
+void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions);
 
 // Function prototypes
 void writeCluster(FILE* f, clusters_t clusters, int c,  int num_dimensions);
@@ -65,8 +81,12 @@ boost::python::object train (
 
   //printf("Number of clusters: %d\n\n",num_clusters);
   
-
   float min_rissanen, rissanen;
+
+  
+  //allocate MxM pointers for scratch clusters used during merging
+  //TODO: take this out as a separate callable function?
+  scratch_cluster_arr = (clusters_t**)malloc(sizeof(clusters_t*)*num_clusters*num_clusters);
   
   int original_num_clusters = num_clusters; //should just %s/original_num/num/g
 
@@ -75,16 +95,10 @@ boost::python::object train (
   CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*original_num_clusters));
   // ========================================================================= 
   
-  /* // ================== Temp cluster data allocation on CPU  =================  */
+  /* // ================== Temp cluster data allocation on CPU for merging and distance comp =================  */
 
-  /* saved_clusters.N = (float*) malloc(sizeof(float)*original_num_clusters); */
-  /* saved_clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters); */
-  /* saved_clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters); */
-  /* saved_clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters); */
-  /* saved_clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters); */
-  /* saved_clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters); */
-  /* saved_clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters); */
-  /* //  saved_clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters); */
+  //printf("allocating scratch clusters\n");
+  //  saved_clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
  
   /* // ==========================================================================  */
 
@@ -231,17 +245,11 @@ boost::python::object train (
  
   // cleanup host memory
 
+  copy_cluster_data_GPU_to_CPU(num_clusters, num_dimensions);
 
   free(likelihoods);
   free(cluster_memberships);
   
-  /* free(saved_clusters.N); */
-  /* free(saved_clusters.pi); */
-  /* free(saved_clusters.constant); */
-  /* free(saved_clusters.avgvar); */
-  /* free(saved_clusters.means); */
-  /* free(saved_clusters.R); */
-  /* free(saved_clusters.Rinv); */
   /* //free(saved_clusters.memberships); */
     
  
@@ -252,9 +260,40 @@ boost::python::object train (
   return boost::python::object(boost::python::ptr(&clusters));
   //return &clusters;
 }
+
+clusters_t* alloc_temp_cluster_on_CPU(int num_dimensions) {
+
+  clusters_t* scratch_cluster = (clusters_t*)malloc(sizeof(clusters_t));
+  scratch_cluster->N = (float*) malloc(sizeof(float));
+  scratch_cluster->pi = (float*) malloc(sizeof(float));
+  scratch_cluster->constant = (float*) malloc(sizeof(float));
+  scratch_cluster->avgvar = (float*) malloc(sizeof(float));
+  scratch_cluster->means = (float*) malloc(sizeof(float)*num_dimensions);
+  scratch_cluster->R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
+  scratch_cluster->Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
+
+  return scratch_cluster;
+}
+
+void dealloc_temp_clusters_on_CPU() {
+
+for(int i = 0; i<num_scratch_clusters; i++) {
+  free(scratch_cluster_arr[i]->N);
+  free(scratch_cluster_arr[i]->pi);
+  free(scratch_cluster_arr[i]->constant);
+  free(scratch_cluster_arr[i]->avgvar);
+  free(scratch_cluster_arr[i]->means);
+  free(scratch_cluster_arr[i]->R);
+  free(scratch_cluster_arr[i]->Rinv);
+  }
+
+  return;
+}
 // ================== Event data allocation on CPU  ================= :
 void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events, int num_dimensions) {
-  
+
+  //printf("Alloc events on CPU\n");
+
   fcs_data_by_event = input_data.data();
   // Transpose the event data (allows coalesced access pattern in E-step kernel)
   // This has consecutive values being from the same dimension of the data 
@@ -272,6 +311,7 @@ void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events,
 // ================== Event data allocation on GPU  ================= :
 
 void alloc_events_on_GPU(int num_dimensions, int num_events) {
+  //printf("Alloc events on GPU\n");
   int mem_size = num_dimensions*num_events*sizeof(float);
     
   // allocate device memory for FCS data
@@ -285,7 +325,8 @@ void alloc_events_on_GPU(int num_dimensions, int num_events) {
 // ================== Cluster data allocation on CPU  ================= :
 
 void alloc_clusters_on_CPU(int original_num_clusters, int num_dimensions, pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
-                           
+
+  //printf("Alloc clusters on CPU\n");
   
   //clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
   //clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);   
@@ -304,6 +345,8 @@ void alloc_clusters_on_CPU(int original_num_clusters, int num_dimensions, pyubla
 
 // ================== Cluster data allocation on GPU  ================= :
 void alloc_clusters_on_GPU(int original_num_clusters, int num_dimensions) {
+
+  //printf("Alloc clusters on GPU\n");
 
   // Setup the cluster data structures on device
   // First allocate structures on the host, CUDA malloc the arrays
@@ -327,6 +370,8 @@ void alloc_clusters_on_GPU(int original_num_clusters, int num_dimensions) {
 
 // ======================== Copy event data from CPU to GPU ================
 void copy_event_data_CPU_to_GPU(int num_events, int num_dimensions) {
+
+  //printf("Copy events to GPU\n");
   int mem_size = num_dimensions*num_events*sizeof(float);
   // copy FCS to device
   CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_event, fcs_data_by_event, mem_size,cudaMemcpyHostToDevice) );
@@ -336,7 +381,22 @@ void copy_event_data_CPU_to_GPU(int num_events, int num_dimensions) {
 
 // ======================== Copy cluster data from CPU to GPU ================
 void copy_cluster_data_CPU_to_GPU(int num_clusters, int num_dimensions) {
-  // copy clusters from the device
+
+   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.N, clusters.N, sizeof(float)*num_clusters,cudaMemcpyHostToDevice)); 
+   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.pi, clusters.pi, sizeof(float)*num_clusters,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.constant, clusters.constant, sizeof(float)*num_clusters,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.avgvar, clusters.avgvar, sizeof(float)*num_clusters,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.means, clusters.means, sizeof(float)*num_dimensions*num_clusters,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.R, clusters.R, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.Rinv, clusters.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(d_clusters,&temp_clusters,sizeof(clusters_t),cudaMemcpyHostToDevice));
+   return;
+}
+// ======================== Copy cluster data from GPU to CPU ================
+void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions) {
+
+  //printf("Copy clusters to GPU\n");
+// copy clusters from the device
   CUDA_SAFE_CALL(cudaMemcpy(&temp_clusters, d_clusters, sizeof(clusters_t),cudaMemcpyDeviceToHost));
   // copy all of the arrays from the structs
   CUDA_SAFE_CALL(cudaMemcpy(clusters.N, temp_clusters.N, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
@@ -425,25 +485,43 @@ void dealloc_clusters_on_GPU() {
 
 // Accessor functions for pi, means and covar
 
-pyublas::numpy_array<float> get_pi(clusters_t* c, int M){
-  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(M);
-  std::copy( c->pi, c->pi+M, ret.begin());
+pyublas::numpy_array<float> get_temp_cluster_pi(clusters_t* c){
+  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(1);
+  std::copy( c->pi, c->pi+1, ret.begin());
   return ret;
 }
 
-pyublas::numpy_array<float> get_means(clusters_t* c, int M, int D){
-  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*M);
-  std::copy( c->means, c->means+D*M, ret.begin());
+pyublas::numpy_array<float> get_temp_cluster_means(clusters_t* c, int D){
+  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D);
+  std::copy( c->means, c->means+D, ret.begin());
   return ret;
 }
 
-pyublas::numpy_array<float> get_covars(clusters_t* c, int M, int D){
-  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*D*M);
-  std::copy( c->R, c->R+D*D*M, ret.begin());
+pyublas::numpy_array<float> get_temp_cluster_covars(clusters_t* c, int D){
+  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*D);
+  std::copy( c->R, c->R+D*D, ret.begin());
   return ret;
 }
 
 //------------------------- AHC FUNCTIONS ----------------------------
+
+int compute_distance_riassen(int c1, int c2, int num_dimensions) {
+  // compute distance function between the 2 clusters
+
+  clusters_t *new_cluster = alloc_temp_cluster_on_CPU(num_dimensions);
+
+  float distance = cluster_distance(&clusters,c1,c2,new_cluster,num_dimensions);
+  scratch_cluster_arr[num_scratch_clusters] = new_cluster;
+  num_scratch_clusters++;
+  
+  ret.cluster = boost::python::object(boost::python::ptr(new_cluster));
+  ret.distance = pyublas::numpy_array<float>(1);
+  ret.distance[0] = distance;
+  
+  return 0;
+
+}
+
 //int merge_2_closest_clusters(int num_clusters, int num_dimensions, int num_events, clusters_t *clusters) {
 boost::python::object merge_2_closest_clusters(clusters_t* clusters,
                                                int num_clusters,   
@@ -526,6 +604,7 @@ boost::python::object merge_2_closest_clusters(clusters_t* clusters,
 
 float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions) {
   // Add the clusters together, this updates pi,means,R,N and stores in temp_cluster
+
   add_clusters(clusters,c1,c2,temp_cluster,num_dimensions);
     
   return clusters->N[c1]*clusters->constant[c1] + clusters->N[c2]*clusters->constant[c2] - temp_cluster->N[0]*temp_cluster->constant[0];
