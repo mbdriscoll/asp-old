@@ -505,12 +505,13 @@ pyublas::numpy_array<float> get_temp_cluster_covars(clusters_t* c, int D){
 
 //------------------------- AHC FUNCTIONS ----------------------------
 
-int compute_distance_riassen(int c1, int c2, int num_dimensions) {
+int compute_distance_rissanen(int c1, int c2, int num_dimensions) {
   // compute distance function between the 2 clusters
 
   clusters_t *new_cluster = alloc_temp_cluster_on_CPU(num_dimensions);
 
   float distance = cluster_distance(&clusters,c1,c2,new_cluster,num_dimensions);
+  printf("distance %d-%d: %f\n", c1, c2, distance);
   scratch_cluster_arr[num_scratch_clusters] = new_cluster;
   num_scratch_clusters++;
   
@@ -522,83 +523,19 @@ int compute_distance_riassen(int c1, int c2, int num_dimensions) {
 
 }
 
-//int merge_2_closest_clusters(int num_clusters, int num_dimensions, int num_events, clusters_t *clusters) {
-boost::python::object merge_2_closest_clusters(clusters_t* clusters,
-                                               int num_clusters,   
-                                               int num_dimensions         
-                                               ) { 
+void merge_clusters(int min_c1, int min_c2, clusters_t *min_cluster, int num_clusters, int num_dimensions) {
                                           
-  int min_c1, min_c2;
-  float distance, min_distance = 0.0;
-  int ret_num_clusters = num_clusters;
-
-  // Used as a temporary cluster for combining clusters in "distance" computations
-  clusters_t scratch_cluster;
-  scratch_cluster.N = (float*) malloc(sizeof(float));
-  scratch_cluster.pi = (float*) malloc(sizeof(float));
-  scratch_cluster.constant = (float*) malloc(sizeof(float));
-  scratch_cluster.avgvar = (float*) malloc(sizeof(float));
-  scratch_cluster.means = (float*) malloc(sizeof(float)*num_dimensions);
-  scratch_cluster.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
-  scratch_cluster.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
-  //  scratch_cluster.memberships = (float*) malloc(sizeof(float)*num_events);
-
-  
-  // First eliminate any "empty" clusters 
-  for(int i=ret_num_clusters-1; i >= 0; i--) {
-    if(clusters->N[i] < 1.0) {
-      //DEBUG("Cluster #%d has less than 1 data point in it.\n",i);
-      for(int j=i; j < ret_num_clusters-1; j++) {
-        copy_cluster(clusters,j,clusters,j+1,num_dimensions);
-      }
-      ret_num_clusters--;
-    }
-  }
-            
-  min_c1 = 0;
-  min_c2 = 1;
-
-  // For all combinations of subclasses...
-  // If the number of clusters got really big might need to do a non-exhaustive search
-  // Even with 100*99/2 combinations this doesn't seem to take too long
-  for(int c1=0; c1<ret_num_clusters;c1++) {
-    for(int c2=c1+1; c2<ret_num_clusters;c2++) {
-      // compute distance function between the 2 clusters
-      distance = cluster_distance(clusters,c1,c2,&scratch_cluster,num_dimensions);
-                    
-      // Keep track of minimum distance
-      if((c1 ==0 && c2 == 1) || distance < min_distance) {
-        min_distance = distance;
-        min_c1 = c1;
-        min_c2 = c2;
-      }
-    }
-  }
-
-  //printf("\nMinimum distance between (%d,%d). Combining clusters\n",min_c1,min_c2);
-  // Add the two clusters with min distance together
-  add_clusters(clusters,min_c1,min_c2,&scratch_cluster,num_dimensions);
-
   // Copy new combined cluster into the main group of clusters, compact them
-  copy_cluster(clusters,min_c1,&scratch_cluster,0,num_dimensions);
+  copy_cluster(&clusters,min_c1, min_cluster,0,num_dimensions);
 
   for(int i=min_c2; i < num_clusters-1; i++) {
   
-    copy_cluster(clusters,i,clusters,i+1,num_dimensions);
+    copy_cluster(&clusters,i,&clusters,i+1,num_dimensions);
   }
-
   
-  free(scratch_cluster.N);
-  free(scratch_cluster.pi);
-  free(scratch_cluster.constant);
-  free(scratch_cluster.avgvar);
-  free(scratch_cluster.means);
-  free(scratch_cluster.R);
-  free(scratch_cluster.Rinv);
-  //free(scratch_cluster.memberships);
-
-  return boost::python::object(boost::python::ptr(clusters));
+  //return boost::python::object(boost::python::ptr(clusters));
   //return boost::python::object(clusters); 
+  return;
 }
 
 

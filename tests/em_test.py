@@ -33,13 +33,13 @@ class EMTester(object):
 
     def test_pure_python(self):
         means, covars = self.gmm.train_using_python(self.X)
-        self.results['Pure'] = ('511', means, covars)
+        self.results['Pure'] = ('611', means, covars)
 
     def test_generated(self):        
         clusters = self.gmm.train(self.X)
-        means = self.gmm.clusters.means.reshape((self.M, self.D))
-        covars = self.gmm.clusters.covars.reshape((self.M, self.D, self.D))
-        self.results['ASP v'+self.version_in] = ('512', means, covars)
+        means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D))
+        covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
+        self.results['ASP v'+self.version_in] = ('612', means, covars)
         return means, covars
         
     # def merge_clusters(self):
@@ -56,6 +56,15 @@ class EMTester(object):
     def test_merge(self):
         self.merge_clusters()
 
+    def get_min_tuple(self, gmm_list):
+        length = len(gmm_list)
+        d_min, t_min = gmm_list[0];
+        for d, t in gmm_list:
+            if(d<d_min):
+                d_min = d #find min
+                t_min = t
+        return d_min, t_min
+        
     def test_ahc(self):
         self.test_pure_python()
         # try one train and one merge
@@ -64,12 +73,20 @@ class EMTester(object):
         count = 2
         for c1 in range(0, self.gmm.M):
             for c2 in range(c1+1, self.gmm.M):
-                new_cluster, dist = self.gmm.compute_distance_riassen(c1, c2, self.gmm.D)
+                new_cluster, dist = self.gmm.compute_distance_rissanen(c1, c2)
                 gmm_list.append((dist, (c1, c2, new_cluster)))
-                means = self.gmm.get_new_cluster_means(new_cluster, 1, self.gmm.D)
-                covars = self.gmm.get_new_cluster_covars(new_cluster, 1, self.gmm.D)
+                means = self.gmm.get_new_cluster_means(new_cluster)
+                covars = self.gmm.get_new_cluster_covars(new_cluster)
                 count+=1
-                self.results['MERGE ASP '+str(c1)+'-'+str(c2)+" v:"+self.version_in] = ('51'+str(count), means, covars)
+                self.results['CANDIDATE ASP '+str(c1)+'-'+str(c2)+" v:"+self.version_in] = ('61'+str(count), means, covars)
+        #compute minimum distance
+        min_dist, min_tuple = self.get_min_tuple(gmm_list)
+        min_c1, min_c2, min_cluster = min_tuple
+        self.gmm.merge_clusters(min_c1, min_c2, min_cluster)
+        new_means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D))
+        new_covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
+        self.results['MERGED ASP v'+self.version_in] = ('616', new_means, new_covars)
+                
           
     def plot(self):
         for t, r in self.results.iteritems():

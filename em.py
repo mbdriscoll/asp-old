@@ -45,7 +45,24 @@ class Clusters(object):
     def init_random_covars(self, M, D):
         return numpy.random.random((M, D, D))
 
+    #this is terribly inefficient - can we get away with no copy?
+    def shrink_clusters(self, new_M, D):
+        new_weights = np.empty(new_M, dtype=np.float32)
+        new_means = np.empty(new_M*D, dtype=np.float32)
+        new_covars = np.empty(new_M*D*D, dtype=np.float32)
 
+        for i in range(0, new_M):
+            new_weights[i] = self.weights[i]
+        for i in range(0, new_M*D):
+            new_means[i] = self.means[i]
+        for i in range(0, new_M*D*D):
+            new_covars[i] = self.covars[i]
+        
+        self.weights = new_weights
+        self.means = new_means
+        self.covars = new_covars
+        
+        
 class GMM(object):
     
     # flags to keep track of memory allocation
@@ -171,8 +188,8 @@ class GMM(object):
         self.aspmod.add_function("", fname="get_temp_cluster_covars")
         
         # Add merge clusters function
-        self.aspmod.add_function("", fname="compute_distance_riassen")
-        self.aspmod.add_function("", fname="merge_2_closest_clusters")
+        self.aspmod.add_function("", fname="compute_distance_rissanen")
+        self.aspmod.add_function("", fname="merge_clusters")
         
 
 
@@ -274,22 +291,23 @@ class GMM(object):
         self.aspmod.train(self.M, D, N, input_data)
         return 
 
-    def merge_2_closest_clusters(self):
-        self.aspmod.merge_2_closest_clusters(self.clusters, self.M, self.D)
+    def merge_clusters(self, min_c1, min_c2, min_cluster):
+        self.aspmod.merge_clusters(min_c1, min_c2, min_cluster, self.M, self.D)
         self.M -= 1
+        self.clusters.shrink_clusters(self.M, self.D)
         return 
 
-    def compute_distance_riassen(self, c1, c2, D):
-        self.aspmod.compute_distance_riassen(c1, c2, D)
+    def compute_distance_rissanen(self, c1, c2):
+        self.aspmod.compute_distance_rissanen(c1, c2, self.D)
         new_cluster = self.aspmod.compiled_module.cluster_distance.new_cluster
         dist = self.aspmod.compiled_module.cluster_distance.distance
         return new_cluster, dist
 
-    def get_new_cluster_means(self, new_cluster, M, D):
-        return self.aspmod.get_temp_cluster_means(new_cluster, D).reshape((M, D))
+    def get_new_cluster_means(self, new_cluster):
+        return self.aspmod.get_temp_cluster_means(new_cluster, self.D).reshape((1, self.D))
 
-    def get_new_cluster_covars(self, new_cluster, M, D):
-        return self.aspmod.get_temp_cluster_covars(new_cluster, D).reshape((M, D, D))
+    def get_new_cluster_covars(self, new_cluster):
+        return self.aspmod.get_temp_cluster_covars(new_cluster, self.D).reshape((1, self.D, self.D))
     
 
 
