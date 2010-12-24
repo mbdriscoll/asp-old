@@ -26,7 +26,8 @@
 typedef struct return_cluster_container
 {
   boost::python::object cluster;
-  pyublas::numpy_array<float> distance;
+  //pyublas::numpy_array<float> distance;
+  float distance;
 } ret_c_con_t;
 
 ret_c_con_t ret;
@@ -72,20 +73,21 @@ void printCluster(clusters_t clusters, int c, int num_dimensions);
 void invert_cpu(float* data, int actualsize, float* log_determinant);
 int invert_matrix(float* a, int n, float* determinant);
 
-boost::python::object train (
+float train (
                              int num_clusters, 
                              int num_dimensions, 
                              int num_events, 
                              pyublas::numpy_array<float> input_data ) 
 {
 
-  //printf("Number of clusters: %d\n\n",num_clusters);
+  printf("Number of clusters: %d\n\n",num_clusters);
   
   float min_rissanen, rissanen;
-
+  num_scratch_clusters = 0;
   
   //allocate MxM pointers for scratch clusters used during merging
   //TODO: take this out as a separate callable function?
+ 
   scratch_cluster_arr = (clusters_t**)malloc(sizeof(clusters_t*)*num_clusters*num_clusters);
   
   int original_num_clusters = num_clusters; //should just %s/original_num/num/g
@@ -95,14 +97,7 @@ boost::python::object train (
   CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*original_num_clusters));
   // ========================================================================= 
   
-  /* // ================== Temp cluster data allocation on CPU for merging and distance comp =================  */
-
-  //printf("allocating scratch clusters\n");
-  //  saved_clusters.memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
- 
-  /* // ==========================================================================  */
-
-  
+   
   // ================= Temp buffer for codevar 2b ================ 
   float *temp_buffer_2b = NULL;
 #if ENABLE_CODEVAR_2B_BUFFER_ALLOC
@@ -142,8 +137,6 @@ boost::python::object train (
   // Variables for GMM reduce order
   float distance, min_distance = 0.0;
   int min_c1, min_c2;
-  float* d_c;
-  CUDA_SAFE_CALL(cudaMalloc((void**) &d_c, sizeof(float)));
 
   //int num_clusters = original_num_clusters;
   //for(int num_clusters=original_num_clusters; num_clusters >= stop_number; num_clusters--) {
@@ -232,8 +225,10 @@ boost::python::object train (
     //printf("Iter %d likelihood = %f\n", iters, likelihood);
     //printf("Change in likelihood: %f (vs. %f)\n",change, epsilon);
 
+
     iters++;
 
+    
   }//EM Loop
         
  //} // outer loop from M to 1 clusters
@@ -242,35 +237,33 @@ boost::python::object train (
   //================================ EM DONE ==============================
   //printf("\nFinal rissanen Score was: %f, with %d clusters.\n",min_rissanen,num_clusters);
   //printf("DONE COMPUTING\n");
- 
-  // cleanup host memory
 
   copy_cluster_data_GPU_to_CPU(num_clusters, num_dimensions);
-
+  
+  // cleanup host memory
   free(likelihoods);
   free(cluster_memberships);
   
-  /* //free(saved_clusters.memberships); */
-    
- 
-  // cleanup GPU memory
-  CUDA_SAFE_CALL(cudaFree(d_likelihoods));
-  CUDA_SAFE_CALL(cudaFree(d_cluster_memberships));
 
-  return boost::python::object(boost::python::ptr(&clusters));
-  //return &clusters;
+  // cleanup GPU memory
+  cudaFree(d_likelihoods);
+  cudaFree(d_cluster_memberships);
+  
+  return likelihood;
+
 }
 
 clusters_t* alloc_temp_cluster_on_CPU(int num_dimensions) {
 
   clusters_t* scratch_cluster = (clusters_t*)malloc(sizeof(clusters_t));
+
   scratch_cluster->N = (float*) malloc(sizeof(float));
   scratch_cluster->pi = (float*) malloc(sizeof(float));
   scratch_cluster->constant = (float*) malloc(sizeof(float));
   scratch_cluster->avgvar = (float*) malloc(sizeof(float));
   scratch_cluster->means = (float*) malloc(sizeof(float)*num_dimensions);
   scratch_cluster->R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
-  scratch_cluster->Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
+  scratch_cluster->Rinv = (float*) malloc(sizeof(float)); //*num_dimensions*num_dimensions);
 
   return scratch_cluster;
 }
@@ -321,6 +314,12 @@ void alloc_events_on_GPU(int num_dimensions, int num_events) {
   return;
 }
 
+//hack hack..
+void relink_clusters_on_CPU(pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
+     clusters.pi = weights.data();
+     clusters.means = means.data();
+     clusters.R = covars.data();
+}
 
 // ================== Cluster data allocation on CPU  ================= :
 
@@ -512,19 +511,19 @@ int compute_distance_rissanen(int c1, int c2, int num_dimensions) {
 
   float distance = cluster_distance(&clusters,c1,c2,new_cluster,num_dimensions);
   printf("distance %d-%d: %f\n", c1, c2, distance);
+
   scratch_cluster_arr[num_scratch_clusters] = new_cluster;
   num_scratch_clusters++;
   
   ret.cluster = boost::python::object(boost::python::ptr(new_cluster));
-  ret.distance = pyublas::numpy_array<float>(1);
-  ret.distance[0] = distance;
-  
+  ret.distance = distance;
+
   return 0;
 
 }
 
 void merge_clusters(int min_c1, int min_c2, clusters_t *min_cluster, int num_clusters, int num_dimensions) {
-                                          
+
   // Copy new combined cluster into the main group of clusters, compact them
   copy_cluster(&clusters,min_c1, min_cluster,0,num_dimensions);
 
@@ -532,9 +531,9 @@ void merge_clusters(int min_c1, int min_c2, clusters_t *min_cluster, int num_clu
   
     copy_cluster(&clusters,i,&clusters,i+1,num_dimensions);
   }
-  
+
   //return boost::python::object(boost::python::ptr(clusters));
-  //return boost::python::object(clusters); 
+  //return boost::python::object(clusters);
   return;
 }
 
@@ -543,8 +542,9 @@ float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cl
   // Add the clusters together, this updates pi,means,R,N and stores in temp_cluster
 
   add_clusters(clusters,c1,c2,temp_cluster,num_dimensions);
-    
+  //printf("%f, %f, %f, %f, %f, %f\n", clusters->N[c1], clusters->constant[c1], clusters->N[c2], clusters->constant[c2], temp_cluster->N[0], temp_cluster->constant[0]);
   return clusters->N[c1]*clusters->constant[c1] + clusters->N[c2]*clusters->constant[c2] - temp_cluster->N[0]*temp_cluster->constant[0];
+  
 }
 
 void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions) {

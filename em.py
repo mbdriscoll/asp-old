@@ -50,18 +50,19 @@ class Clusters(object):
         new_weights = np.empty(new_M, dtype=np.float32)
         new_means = np.empty(new_M*D, dtype=np.float32)
         new_covars = np.empty(new_M*D*D, dtype=np.float32)
-
+                
         for i in range(0, new_M):
             new_weights[i] = self.weights[i]
         for i in range(0, new_M*D):
             new_means[i] = self.means[i]
         for i in range(0, new_M*D*D):
             new_covars[i] = self.covars[i]
-        
+
         self.weights = new_weights
         self.means = new_means
         self.covars = new_covars
-        
+
+        return self.weights, self.means, self.covars
         
 class GMM(object):
     
@@ -72,8 +73,8 @@ class GMM(object):
     def internal_alloc_event_data(self, X):
         #TODO: test for not null
         #if not X.any(): return
-        if self.event_data_gpu_copy != X:
-            if self.event_data_gpu_copy:
+        if not np.array_equal(self.event_data_gpu_copy, X):
+            if self.event_data_gpu_copy is not None:
                 self.internal_free_event_data()
             self.aspmod.alloc_events_on_CPU(X, X.shape[0], X.shape[1])
             self.aspmod.alloc_events_on_GPU(X.shape[0], X.shape[1])
@@ -81,7 +82,7 @@ class GMM(object):
             self.event_data_gpu_copy = X
 
     def internal_free_event_data(self):
-        #if self.event_data_gpu_copy:
+        if self.event_data_gpu_copy is not None:
             self.aspmod.dealloc_events_on_CPU()
             self.aspmod.dealloc_events_on_GPU()
             self.event_data_gpu_copy = None
@@ -90,7 +91,6 @@ class GMM(object):
 
         #TODO: test for not null
         #if not self.clusters.weights.size: return
-
         if self.cluster_data_gpu_copy != self.clusters:
             if self.cluster_data_gpu_copy:
                 self.internal_free_cluster_data()
@@ -100,7 +100,7 @@ class GMM(object):
             self.cluster_data_gpu_copy = self.clusters
             
     def internal_free_cluster_data(self):
-        #if self.cluster_data_gpu_copy:
+        if self.cluster_data_gpu_copy is not None:
             self.aspmod.dealloc_clusters_on_CPU()
             self.aspmod.dealloc_clusters_on_GPU()
             self.cluster_data_gpu_copy = None
@@ -180,7 +180,7 @@ class GMM(object):
         self.aspmod.add_function("", fname="dealloc_events_on_GPU")
         self.aspmod.add_function("", fname="dealloc_clusters_on_CPU")
         self.aspmod.add_function("", fname="dealloc_clusters_on_GPU")
-        #self.aspmod.add_function("", fname="dealloc_temp_cluster_on_CPU")
+        self.aspmod.add_function("", fname="dealloc_temp_clusters_on_CPU")
         
         # Add getter functions
         self.aspmod.add_function("", fname="get_temp_cluster_pi")
@@ -188,6 +188,7 @@ class GMM(object):
         self.aspmod.add_function("", fname="get_temp_cluster_covars")
         
         # Add merge clusters function
+        self.aspmod.add_function("", fname="relink_clusters_on_CPU")
         self.aspmod.add_function("", fname="compute_distance_rissanen")
         self.aspmod.add_function("", fname="merge_clusters")
         
@@ -266,13 +267,15 @@ class GMM(object):
         self.aspmod.toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
         nvcc_toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/egonina/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 
+        self.aspmod.set_GPU_device(0);        
+
+        
         #print self.aspmod.module.generate()
         self.aspmod.compile()
 
     def __del__(self):
         self.internal_free_event_data()
         self.internal_free_cluster_data()
-    
     
     def train_using_python(self, input_data):
         from scikits.learn import mixture
@@ -284,17 +287,18 @@ class GMM(object):
         N = input_data.shape[0] #TODO: handle types other than np.array?
         D = input_data.shape[1]
 
-        self.aspmod.set_GPU_device(0);
         self.internal_alloc_event_data(input_data)
         self.internal_alloc_cluster_data()
 
-        self.aspmod.train(self.M, D, N, input_data)
-        return 
+        likelihood = self.aspmod.train(self.M, D, N, input_data)
+        return likelihood
 
     def merge_clusters(self, min_c1, min_c2, min_cluster):
         self.aspmod.merge_clusters(min_c1, min_c2, min_cluster, self.M, self.D)
         self.M -= 1
-        self.clusters.shrink_clusters(self.M, self.D)
+        w, m, c = self.clusters.shrink_clusters(self.M, self.D)
+        self.aspmod.relink_clusters_on_CPU(w, m, c)
+        self.aspmod.dealloc_temp_clusters_on_CPU()
         return 
 
     def compute_distance_rissanen(self, c1, c2):
