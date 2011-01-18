@@ -37,6 +37,7 @@ class EMTester(object):
         self.results['Pure'] = ('411', means, covars)
 
     def test_generated(self):        
+
         likelihood = self.gmm.train(self.X)
         means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D))
         covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
@@ -101,7 +102,6 @@ class EMTester(object):
                 min_dist, min_tuple = self.get_min_tuple(gmm_list)
                 min_c1, min_c2, min_cluster = min_tuple
                 self.gmm.merge_clusters(min_c1, min_c2, min_cluster)
-
 
     def plot(self):
         for t, r in self.results.iteritems():

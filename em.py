@@ -108,6 +108,7 @@ class GMM(object):
     def __init__(self, M, D, version_in, means=None, covars=None, weights=None):
         self.M = M
         self.D = D
+        self.version_in = version_in
 
         self.clusters = Clusters(M, D, weights, means, covars)
             
@@ -118,7 +119,7 @@ class GMM(object):
                                   '2B': 'CODEVAR_2B',
                                   '3' : 'CODEVAR_3A',
                                   '3A': 'CODEVAR_3A' }
-        version_suffix = version_suffix_mapping[version_in]
+        version_suffix = version_suffix_mapping[self.version_in]
 
         # Render C/CUDA source templates based on inputs
         #TODO: Render "all possible" variants instead of picking a single one based on constructor parameter
@@ -219,8 +220,8 @@ class GMM(object):
             void mstep_covar_launch_CODEVAR_2B(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
             void mstep_covar_launch_CODEVAR_3A(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b);
             """
-        self.aspmod.add_to_preamble([Line(cluster_t_decl)])
-        self.aspmod.add_to_preamble([Line(cuda_launch_decls)])
+        self.aspmod.add_to_preamble(cluster_t_decl)
+        self.aspmod.add_to_preamble(cuda_launch_decls)
 
         #Add necessary headers
         #TODO: Figure out whether we can free ourselves from cutils
@@ -258,6 +259,7 @@ class GMM(object):
         def numpy_inc():
             file, pathname, descr = find_module("numpy")
             return join(pathname, "core", "include")
+
         nvcc_toolchain = self.aspmod.nvcc_toolchain
         nvcc_toolchain.cflags += ["-arch=sm_20"]
         self.aspmod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
@@ -268,7 +270,6 @@ class GMM(object):
         nvcc_toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/egonina/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 
         self.aspmod.set_GPU_device(0);        
-
         
         #print self.aspmod.module.generate()
         self.aspmod.compile()
@@ -286,7 +287,6 @@ class GMM(object):
     def train(self, input_data):
         N = input_data.shape[0] #TODO: handle types other than np.array?
         D = input_data.shape[1]
-
         self.internal_alloc_event_data(input_data)
         self.internal_alloc_cluster_data()
 
