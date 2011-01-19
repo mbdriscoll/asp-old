@@ -29,7 +29,7 @@ class EMTester(object):
             np.dot(np.random.randn(N/2, 2), C),
             np.random.randn(N/2, 2) + np.array([3, 3]),
             ]
-        self.X = np.array(Y, dtype=np.float32)
+        self.X = Y.astype(np.float32)
         #self.X = np.recfromcsv('test.csv', names=None, dtype=np.float32)
 
     def test_pure_python(self):
