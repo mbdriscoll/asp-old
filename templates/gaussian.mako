@@ -80,7 +80,7 @@ float train (
                              pyublas::numpy_array<float> input_data ) 
 {
 
-  printf("Number of clusters: %d\n\n",num_clusters);
+  //printf("Number of clusters: %d\n\n",num_clusters);
   
   float min_rissanen, rissanen;
   num_scratch_clusters = 0;
@@ -263,7 +263,7 @@ clusters_t* alloc_temp_cluster_on_CPU(int num_dimensions) {
   scratch_cluster->avgvar = (float*) malloc(sizeof(float));
   scratch_cluster->means = (float*) malloc(sizeof(float)*num_dimensions);
   scratch_cluster->R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
-  scratch_cluster->Rinv = (float*) malloc(sizeof(float)); //*num_dimensions*num_dimensions);
+  scratch_cluster->Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
 
   return scratch_cluster;
 }
@@ -510,7 +510,7 @@ int compute_distance_rissanen(int c1, int c2, int num_dimensions) {
   clusters_t *new_cluster = alloc_temp_cluster_on_CPU(num_dimensions);
 
   float distance = cluster_distance(&clusters,c1,c2,new_cluster,num_dimensions);
-  printf("distance %d-%d: %f\n", c1, c2, distance);
+  //printf("distance %d-%d: %f\n", c1, c2, distance);
 
   scratch_cluster_arr[num_scratch_clusters] = new_cluster;
   num_scratch_clusters++;
