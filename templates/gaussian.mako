@@ -9,19 +9,6 @@
 
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
-#define NUM_BLOCKS_ESTEP   ${num_blocks_estep} // Num of blocks per cluster for the E-step
-#define NUM_THREADS_ESTEP  ${num_threads_estep} // should be a power of 2 
-#define NUM_THREADS_MSTEP  ${num_threads_mstep} // should be a power of 2
-#define NUM_EVENT_BLOCKS   ${num_event_blocks}
-#define MAX_NUM_DIMENSIONS ${max_num_dimensions}
-#define MAX_NUM_CLUSTERS   ${max_num_clusters}
-#define DEVICE             ${device_id} // Which GPU to use, if more than 1
-#define DIAG_ONLY          ${diag_only} // Using only diagonal covariance matrix, thus all dimensions are considered independent
-#define MAX_ITERS          ${max_iters} // Maximum number of iterations for the EM convergence loop
-#define MIN_ITERS          ${min_iters}// Minimum number of iterations (normally 0 unless doing performance testing)
-#define ENABLE_CODEVAR_2B_BUFFER_ALLOC ${enable_2b_buffer}
-#define VERSION_SUFFIX     ${version_suffix}
-
 
 typedef struct return_cluster_container
 {
@@ -31,7 +18,6 @@ typedef struct return_cluster_container
 } ret_c_con_t;
 
 ret_c_con_t ret;
-
   
 //=== Data structure pointers ===
 
@@ -72,186 +58,6 @@ void writeCluster(FILE* f, clusters_t clusters, int c,  int num_dimensions);
 void printCluster(clusters_t clusters, int c, int num_dimensions);
 void invert_cpu(float* data, int actualsize, float* log_determinant);
 int invert_matrix(float* a, int n, float* determinant);
-
-float train (
-                             int num_clusters, 
-                             int num_dimensions, 
-                             int num_events, 
-                             pyublas::numpy_array<float> input_data ) 
-{
-
-  //printf("Number of clusters: %d\n\n",num_clusters);
-  
-  float min_rissanen, rissanen;
-  num_scratch_clusters = 0;
-  
-  //allocate MxM pointers for scratch clusters used during merging
-  //TODO: take this out as a separate callable function?
- 
-  scratch_cluster_arr = (clusters_t**)malloc(sizeof(clusters_t*)*num_clusters*num_clusters);
-  
-  int original_num_clusters = num_clusters; //should just %s/original_num/num/g
-
-  // ================= Cluster membership alloc on CPU and GPU =============== 
-  cluster_memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*original_num_clusters));
-  // ========================================================================= 
-  
-   
-  // ================= Temp buffer for codevar 2b ================ 
-  float *temp_buffer_2b = NULL;
-#if ENABLE_CODEVAR_2B_BUFFER_ALLOC
-  //scratch space to clear out clusters->R
-  float *zeroR_2b = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  for(int i = 0; i<num_dimensions*num_dimensions*original_num_clusters; i++) {
-    zeroR_2b[i] = 0.0f;
-  }
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_buffer_2b),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*original_num_clusters, cudaMemcpyHostToDevice) );
-#endif
-  //=============================================================== 
-    
-  //////////////// Initialization done, starting kernels //////////////// 
-  fflush(stdout);
-
-  // seed_clusters sets initial pi values, 
-  // finds the means / covariances and copies it to all the clusters
-  seed_clusters_launch( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);
-  cudaThreadSynchronize();
-  CUT_CHECK_ERROR("Seed Kernel execution failed: ");
-   
-  // Computes the R matrix inverses, and the gaussian constant
-  constants_kernel_launch(d_clusters,original_num_clusters,num_dimensions);
-  cudaThreadSynchronize();
-  CUT_CHECK_ERROR("Constants Kernel execution failed: ");
-    
-  // Calculate an epsilon value
-  float epsilon = (1+num_dimensions+0.5*(num_dimensions+1)*num_dimensions)*log((float)num_events*num_dimensions)*0.0001;
-  int iters;
-  float likelihood, old_likelihood;
-  // Used to hold the result from regroup kernel
-  float* likelihoods = (float*) malloc(sizeof(float)*NUM_BLOCKS_ESTEP);
-  float* d_likelihoods;
-  CUDA_SAFE_CALL(cudaMalloc((void**) &d_likelihoods, sizeof(float)*NUM_BLOCKS_ESTEP));
-    
-  // Variables for GMM reduce order
-  float distance, min_distance = 0.0;
-  int min_c1, min_c2;
-
-  //int num_clusters = original_num_clusters;
-  //for(int num_clusters=original_num_clusters; num_clusters >= stop_number; num_clusters--) {
-  /*************** EM ALGORITHM *****************************/
-        
-  // do initial regrouping
-  // Regrouping means calculate a cluster membership probability
-  // for each event and each cluster. Each event is independent,
-  // so the events are distributed to different blocks 
-  // (and hence different multiprocessors)
-
-  //================================== EM INITIALIZE =======================
-
-  estep1_launch(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
-  //cudaThreadSynchronize();
-
-  estep2_launch(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
-  cudaThreadSynchronize();
-
-  // check if kernel execution generated an error
-  CUT_CHECK_ERROR("Kernel execution failed");
-
-  // Copy the likelihood totals from each block, sum them up to get a total
-  CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS_ESTEP,cudaMemcpyDeviceToHost));
-  likelihood = 0.0;
-  for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
-    likelihood += likelihoods[i]; 
-  }
-  //printf("Starter Likelihood: %e\n",likelihood);
-
-  float change = epsilon*2;
-
-  //================================= EM BEGIN ==================================
-  //printf("Performing EM algorithm on %d clusters.\n",num_clusters);
-  iters = 0;
-
-  // This is the iterative loop for the EM algorithm.
-  // It re-estimates parameters, re-computes constants, and then regroups the events
-  // These steps keep repeating until the change in likelihood is less than some epsilon        
-  while(iters < MIN_ITERS || (iters < MAX_ITERS && fabs(change) > epsilon)) {
-    old_likelihood = likelihood;
-            
-    //params = M step
-    // This kernel computes a new N, pi isn't updated until compute_constants though
-    mstep_N_launch(d_fcs_data_by_event,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events);
-    cudaThreadSynchronize();
-
-    // This kernel computes new means
-    mstep_means_launch(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events);
-    cudaThreadSynchronize();
-            
-#if ENABLE_CODEVAR_2B_BUFFER_ALLOC
-    CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_clusters, cudaMemcpyHostToDevice) );
-#endif
-    // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per cluster
-    mstep_covar_launch_${version_suffix}(d_fcs_data_by_dimension,d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events,temp_buffer_2b);
-    cudaThreadSynchronize();
-                 
-    CUT_CHECK_ERROR("M-step Kernel execution failed: ");
-
-
-    // Inverts the R matrices, computes the constant, normalizes cluster probabilities
-    constants_kernel_launch(d_clusters,num_clusters,num_dimensions);
-    cudaThreadSynchronize();
-    CUT_CHECK_ERROR("Constants Kernel execution failed: ");
-
-    //regroup = E step
-    // Compute new cluster membership probabilities for all the events
-    estep1_launch(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
-
-    estep2_launch(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
-    cudaThreadSynchronize();
-
-    CUT_CHECK_ERROR("E-step Kernel execution failed: ");
-        
-    // check if kernel execution generated an error
-    CUT_CHECK_ERROR("Kernel execution failed");
-        
-    CUDA_SAFE_CALL(cudaMemcpy(likelihoods,d_likelihoods,sizeof(float)*NUM_BLOCKS_ESTEP,cudaMemcpyDeviceToHost));
-    likelihood = 0.0;
-    for(int i=0;i<NUM_BLOCKS_ESTEP;i++) {
-      likelihood += likelihoods[i]; 
-    }
-            
-    change = likelihood - old_likelihood;
-    //printf("Iter %d likelihood = %f\n", iters, likelihood);
-    //printf("Change in likelihood: %f (vs. %f)\n",change, epsilon);
-
-
-    iters++;
-
-    
-  }//EM Loop
-        
- //} // outer loop from M to 1 clusters
-
-
-  //================================ EM DONE ==============================
-  //printf("\nFinal rissanen Score was: %f, with %d clusters.\n",min_rissanen,num_clusters);
-  //printf("DONE COMPUTING\n");
-
-  copy_cluster_data_GPU_to_CPU(num_clusters, num_dimensions);
-  
-  // cleanup host memory
-  free(likelihoods);
-  free(cluster_memberships);
-  
-
-  // cleanup GPU memory
-  cudaFree(d_likelihoods);
-  cudaFree(d_cluster_memberships);
-  
-  return likelihood;
-
-}
 
 clusters_t* alloc_temp_cluster_on_CPU(int num_dimensions) {
 
@@ -417,22 +223,10 @@ void set_GPU_device(int device) {
   if(GPUCount == 0) {
     //printf("Only 1 CUDA device found, defaulting to it.\n");
     device = 0;
-  } else if (GPUCount >= 1 && device >= 0) {
-    //printf("Multiple CUDA devices found, selecting device based on user input: %d\n",device);
-  } else if(GPUCount >= 1 && DEVICE < GPUCount) {
-    //printf("Multiple CUDA devices found, selecting based on compiled default: %d\n",DEVICE);
-    device = DEVICE;
-  } else {
-    //printf("Fatal Error: Unable to set device to %d, not enough GPUs.\n",DEVICE);
-    exit(2);
+  } else if (device >= GPUCount) {
+    device  = GPUCount-1;
   }
   CUDA_SAFE_CALL(cudaSetDevice(device));
-    
-  cudaDeviceProp prop;
-  cudaGetDeviceProperties(&prop, device);
-  //printf("\nUsing device - %s\n\n", prop.name);
-
-  return;
 }
 
 

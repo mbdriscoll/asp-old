@@ -26,7 +26,7 @@ class EMTester(object):
         self.M = M
         self.D = D
         self.N = N
-        self.gmm = GMM(M, D, version_in)
+        self.gmm = GMM(M, D)
         
         self.results = {}
         
