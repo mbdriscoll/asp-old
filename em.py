@@ -74,42 +74,50 @@ class GMM(object):
 
     # flags to keep track of memory allocation
     event_data_gpu_copy = None
+    event_data_cpu_copy = None
     cluster_data_gpu_copy = None
+    cluster_data_cpu_copy = None
 
     def internal_alloc_event_data(self, X):
         #TODO: test for not null
         #if not X.any(): return
         if not np.array_equal(self.event_data_gpu_copy, X):
-            if self.event_data_gpu_copy is not None:
+            if GMM.event_data_gpu_copy is not None:
                 self.internal_free_event_data()
             self.get_asp_mod().alloc_events_on_CPU(X, X.shape[0], X.shape[1])
             self.get_asp_mod().alloc_events_on_GPU(X.shape[0], X.shape[1])
             self.get_asp_mod().copy_event_data_CPU_to_GPU(X.shape[0], X.shape[1])
-            self.event_data_gpu_copy = X
+            GMM.event_data_gpu_copy = X
+            GMM.event_data_cpu_copy = X
 
     def internal_free_event_data(self):
-        if self.event_data_gpu_copy is not None:
-            self.get_asp_mod().dealloc_events_on_CPU()
+        if GMM.event_data_gpu_copy is not None:
             self.get_asp_mod().dealloc_events_on_GPU()
-            self.event_data_gpu_copy = None
+            GMM.event_data_gpu_copy = None
+        if self.event_data_cpu_copy is not None:
+            self.get_asp_mod().dealloc_events_on_CPU()
+            GMM.event_data_cpu_copy = None
 
     def internal_alloc_cluster_data(self):
 
         #TODO: test for not null
         #if not self.clusters.weights.size: return
-        if self.cluster_data_gpu_copy != self.clusters:
-            if self.cluster_data_gpu_copy:
+        if GMM.cluster_data_gpu_copy != self.clusters:
+            if GMM.cluster_data_gpu_copy:
                 self.internal_free_cluster_data()
-            self.get_asp_mod().alloc_clusters_on_CPU(self.M, self.D, self.clusters.weights, self.clusters.means, self.clusters.covars)
             self.get_asp_mod().alloc_clusters_on_GPU(self.M, self.D)
+            self.get_asp_mod().alloc_clusters_on_CPU(self.M, self.D, self.clusters.weights, self.clusters.means, self.clusters.covars)
             self.get_asp_mod().copy_cluster_data_CPU_to_GPU(self.M, self.D)
-            self.cluster_data_gpu_copy = self.clusters
+            GMM.cluster_data_gpu_copy = self.clusters
+            GMM.cluster_data_cpu_copy = self.clusters
             
     def internal_free_cluster_data(self):
-        if self.cluster_data_gpu_copy is not None:
-            self.get_asp_mod().dealloc_clusters_on_CPU()
+        if GMM.cluster_data_gpu_copy is not None:
             self.get_asp_mod().dealloc_clusters_on_GPU()
-            self.cluster_data_gpu_copy = None
+            GMM.cluster_data_gpu_copy = None
+        if GMM.cluster_data_cpu_copy is not None:
+            self.get_asp_mod().dealloc_clusters_on_CPU()
+            GMM.cluster_data_cpu_copy = None
 
 
     def __init__(self, M, D, variant_param_space=None, means=None, covars=None, weights=None):
