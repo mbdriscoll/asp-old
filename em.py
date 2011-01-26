@@ -123,7 +123,7 @@ class GMM(object):
     def __init__(self, M, D, variant_param_space=None, means=None, covars=None, weights=None):
         self.M = M
         self.D = D
-        self.variant_param_space = variant_param_space or self.variant_param_default
+        self.variant_param_space = variant_param_space or GMM.variant_param_default
 
         self.clusters = Clusters(M, D, weights, means, covars)
 
@@ -162,19 +162,17 @@ class GMM(object):
         cu_kern_rend_list = []
         for k, vals in self.variant_param_space.iteritems():
             variant_param_dict[k] = vals[0]
-        params_list.append(copy.deepcopy(variant_param_dict))
-        #for k, vals in self.variant_param_space.iteritems():
-        #    for v in vals:
-        #        variant_param_dict[k] = v
-        #        params_list.append(copy.deepcopy(variant_param_dict))
+        for v in self.variant_param_space['covar_version_name']:
+            variant_param_dict['covar_version_name'] = v
+            params_list.append(copy.deepcopy(variant_param_dict))
 
-        list_of_val_lists = []
+        list_of_suffixes = []
         for p in params_list:
             vals = p.values()
             c_main_rend_list.append(  c_main_tpl.render( param_val_list = vals, **p))
             cu_kern_rend_list.append(cu_kern_tpl.render( param_val_list = vals, **p))
             c_decl_rend_list.append(  c_decl_tpl.render( param_val_list = vals, **p))
-            list_of_val_lists.append(vals)
+            list_of_suffixes.append(vals)
 
         c_base_rend = c_base_tpl.render()
         cu_base_rend = cu_base_tpl.render()
@@ -182,9 +180,14 @@ class GMM(object):
         GMM.asp_mod.module.add_to_module([Line(c_base_rend)])
         cuda_mod.add_to_module([Line(cu_base_rend)])
 
-        GMM.asp_mod.add_function_with_variants(c_main_rend_list, "train", [ 'train_'+'_'.join(vl) for vl in list_of_val_lists ])
-        cuda_mod.add_to_module([Line(cu_kern_rend_list[0])])
-        GMM.asp_mod.add_to_preamble(c_decl_rend_list[0])
+        GMM.asp_mod.add_function_with_variants( c_main_rend_list, 
+                                                "train", 
+                                                [ 'train_'+'_'.join(vl) for vl in list_of_suffixes ], 
+                                                lambda name, *args, **kwargs: (name, args[0], args[1], args[2]) )
+        for rend in cu_kern_rend_list:
+            cuda_mod.add_to_module([Line(rend)])
+        for rend in c_decl_rend_list:
+            GMM.asp_mod.add_to_preamble(rend)
 
         # Add set GPU device function
         GMM.asp_mod.add_function("", fname="set_GPU_device")
