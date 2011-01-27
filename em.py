@@ -59,8 +59,9 @@ class GMM(object):
     asp_mod = None    
     def get_asp_mod(self): return GMM.asp_mod or self.initialize_asp_mod()
 
+    #Default parameter space for code variants
     variant_param_default = {
-            'num_blocks_estep': ['16', '32'],
+            'num_blocks_estep': ['16'],
             'num_threads_estep': ['512'],
             'num_threads_mstep': ['256'],
             'num_event_blocks': ['128'],
@@ -72,12 +73,13 @@ class GMM(object):
             'covar_version_name': ['1', '2A', '2B', '3']
     }
 
-    # flags to keep track of memory allocation
+    #Flags to keep track of memory allocations, singletons
     event_data_gpu_copy = None
     event_data_cpu_copy = None
     cluster_data_gpu_copy = None
     cluster_data_cpu_copy = None
 
+    # nternal functions to allocate and deallocate cluster and event data on the CPU and GPU
     def internal_alloc_event_data(self, X):
         #TODO: test for not null
         #if not X.any(): return
@@ -99,7 +101,6 @@ class GMM(object):
             GMM.event_data_cpu_copy = None
 
     def internal_alloc_cluster_data(self):
-
         #TODO: test for not null
         #if not self.clusters.weights.size: return
         if GMM.cluster_data_gpu_copy != self.clusters:
@@ -119,14 +120,13 @@ class GMM(object):
             self.get_asp_mod().dealloc_clusters_on_CPU()
             GMM.cluster_data_cpu_copy = None
 
-
     def __init__(self, M, D, variant_param_space=None, means=None, covars=None, weights=None):
         self.M = M
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
-
         self.clusters = Clusters(M, D, weights, means, covars)
 
+    #Called the first time a GMM instance tries to use a specialized function
     def initialize_asp_mod(self):
 
         # Create ASP module
@@ -134,7 +134,6 @@ class GMM(object):
         cuda_mod = GMM.asp_mod.cuda_module
 
         #Add decls to preamble necessary for linking to compiled CUDA sources
-        #TODO: Would it be better to pull in this preamble stuff from a file rather than have it  all sitting here?
         cluster_t_decl =""" 
             typedef struct clusters_struct {
                 float* N;        // expected # of pixels in cluster: [M]
@@ -146,13 +145,17 @@ class GMM(object):
                 float* Rinv;   // Inverse of covariance matrix: [M*D*D]
             } clusters_t;"""
         GMM.asp_mod.add_to_preamble(cluster_t_decl)
+        cuda_mod.add_to_preamble([Line(cluster_t_decl)])
 
-        # Render C/CUDA source templates based on inputs
-        c_main_tpl = AspTemplate.Template(filename="templates/train.mako")
-        cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
-        c_decl_tpl = AspTemplate.Template(filename="templates/gaussian_decl.mako") 
+        #Add necessary headers
+        host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
+        for x in host_system_header_names: GMM.asp_mod.add_to_preamble([Include(x, True)])
+        cuda_mod.add_to_preamble([Include('stdio.h',True)])
+        #TODO: Figure out whether we can free ourselves from cutils
+        host_project_header_names = [ 'cutil_inline.h'] 
+        for x in host_project_header_names: GMM.asp_mod.add_to_preamble([Include(x, False)])
 
-        #C/CUDA sources that are not based on inputs...
+        #Add C/CUDA source code that is not based on code variant parameters
         #TODO: stop using templates and just read from file?
         #TODO: also, rename files and make them .c and .cu instead of .mako?
         c_base_tpl = AspTemplate.Template(filename="templates/gaussian.mako")
@@ -161,6 +164,11 @@ class GMM(object):
         cu_base_tpl = AspTemplate.Template(filename="templates/theta_kernel_base.mako")
         cu_base_rend = cu_base_tpl.render()
         cuda_mod.add_to_module([Line(cu_base_rend)])
+
+        #Add C/CUDA source code that is based on code variant parameters
+        c_main_tpl = AspTemplate.Template(filename="templates/train.mako")
+        cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
+        c_decl_tpl = AspTemplate.Template(filename="templates/gaussian_decl.mako") 
 
         def render_and_add_to_module( param_dict ):
             vals = param_dict.values()
@@ -191,18 +199,14 @@ class GMM(object):
         # Add set GPU device function
         GMM.asp_mod.add_function("", fname="set_GPU_device")
         
-        # Add malloc and copy functions
+        # Add malloc, copy and free functions
         GMM.asp_mod.add_function("", fname="alloc_events_on_CPU")
         GMM.asp_mod.add_function("", fname="alloc_events_on_GPU")
         GMM.asp_mod.add_function("", fname="alloc_clusters_on_CPU")
         GMM.asp_mod.add_function("", fname="alloc_clusters_on_GPU")
-        #GMM.asp_mod.add_function("", fname="alloc_temp_cluster_on_CPU")
-        
         GMM.asp_mod.add_function("", fname="copy_event_data_CPU_to_GPU")
         GMM.asp_mod.add_function("", fname="copy_cluster_data_CPU_to_GPU")
         GMM.asp_mod.add_function("", fname="copy_cluster_data_GPU_to_CPU")
-
-        # Add dealloc functions
         GMM.asp_mod.add_function("", fname="dealloc_events_on_CPU")
         GMM.asp_mod.add_function("", fname="dealloc_events_on_GPU")
         GMM.asp_mod.add_function("", fname="dealloc_clusters_on_CPU")
@@ -219,28 +223,13 @@ class GMM(object):
         GMM.asp_mod.add_function("", fname="compute_distance_rissanen")
         GMM.asp_mod.add_function("", fname="merge_clusters")
 
-        #Add necessary headers
-        #TODO: Figure out whether we can free ourselves from cutils
-        host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
-        host_project_header_names = [ 'cutil_inline.h'] 
-        for x in host_system_header_names: GMM.asp_mod.add_to_preamble([Include(x, True)])
-        for x in host_project_header_names: GMM.asp_mod.add_to_preamble([Include(x, False)])
-
+        #Add Boost interface links for clusters and distance objects
         GMM.asp_mod.add_to_init("""boost::python::class_<clusters_struct>("Clusters");
             boost::python::scope().attr("clusters") = boost::python::object(boost::python::ptr(&clusters));""")
-
-        # GMM.asp_mod.add_to_init("""boost::python::class_<return_cluster_container>("ReturnClusterContainer")
-        #    .def(pyublas::by_value_rw_member( "distance", &return_cluster_container::distance)) ;
-        #     boost::python::scope().attr("cluster_distance") = boost::python::object(boost::python::ptr(&ret));""")
-
         GMM.asp_mod.add_to_init("""boost::python::class_<return_cluster_container>("ReturnClusterContainer")
             .def(pyublas::by_value_rw_member( "new_cluster", &return_cluster_container::cluster))
             .def(pyublas::by_value_rw_member( "distance", &return_cluster_container::distance)) ;
             boost::python::scope().attr("cluster_distance") = boost::python::object(boost::python::ptr(&ret));""")
-        
-        #Add headers, decls and rendered source to cuda_module
-        cuda_mod.add_to_preamble([Include('stdio.h',True)])
-        cuda_mod.add_to_preamble([Line(cluster_t_decl)])
         
         # Setup toolchain and compile
         def pyublas_inc():
