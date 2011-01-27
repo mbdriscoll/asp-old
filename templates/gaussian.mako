@@ -589,7 +589,7 @@ static float double_abs(float x)
 static int
 ludcmp(float *a,int n,int *indx,float *d)
 {
-  int i,imax,j,k;
+  int i,imax=0,j,k;
   float big,dum,sum,temp;
   float *vv;
 

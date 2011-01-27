@@ -9,7 +9,6 @@ float train${'_'+'_'.join(param_val_list)} (
 
   //printf("Number of clusters: %d\n\n",num_clusters);
   
-  float min_rissanen, rissanen;
   num_scratch_clusters = 0;
   
   //allocate MxM pointers for scratch clusters used during merging
@@ -61,10 +60,6 @@ float train${'_'+'_'.join(param_val_list)} (
   float* d_likelihoods;
   CUDA_SAFE_CALL(cudaMalloc((void**) &d_likelihoods, sizeof(float)*${num_blocks_estep}));
     
-  // Variables for GMM reduce order
-  float distance, min_distance = 0.0;
-  int min_c1, min_c2;
-
   /*************** EM ALGORITHM *****************************/
         
   //================================== EM INITIALIZE =======================
@@ -151,7 +146,6 @@ float train${'_'+'_'.join(param_val_list)} (
         
 
   //================================ EM DONE ==============================
-  //printf("\nFinal rissanen Score was: %f, with %d clusters.\n",min_rissanen,num_clusters);
   //printf("DONE COMPUTING\n");
 
   copy_cluster_data_GPU_to_CPU(num_clusters, num_dimensions);
