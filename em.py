@@ -60,7 +60,7 @@ class GMM(object):
     def get_asp_mod(self): return GMM.asp_mod or self.initialize_asp_mod()
 
     variant_param_default = {
-            'num_blocks_estep': ['16'],
+            'num_blocks_estep': ['16', '32'],
             'num_threads_estep': ['512'],
             'num_threads_mstep': ['256'],
             'num_event_blocks': ['128'],
@@ -148,46 +148,45 @@ class GMM(object):
         GMM.asp_mod.add_to_preamble(cluster_t_decl)
 
         # Render C/CUDA source templates based on inputs
-        c_base_tpl = AspTemplate.Template(filename="templates/gaussian.mako")
-        cu_base_tpl = AspTemplate.Template(filename="templates/theta_kernel_base.mako")
         c_main_tpl = AspTemplate.Template(filename="templates/train.mako")
         cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
         c_decl_tpl = AspTemplate.Template(filename="templates/gaussian_decl.mako") 
 
-        import copy
-        variant_param_dict = {}
-        params_list = []
-        c_main_rend_list = []
-        c_decl_rend_list = []
-        cu_kern_rend_list = []
-        for k, vals in self.variant_param_space.iteritems():
-            variant_param_dict[k] = vals[0]
-        for v in self.variant_param_space['covar_version_name']:
-            variant_param_dict['covar_version_name'] = v
-            params_list.append(copy.deepcopy(variant_param_dict))
-
-        list_of_suffixes = []
-        for p in params_list:
-            vals = p.values()
-            c_main_rend_list.append(  c_main_tpl.render( param_val_list = vals, **p))
-            cu_kern_rend_list.append(cu_kern_tpl.render( param_val_list = vals, **p))
-            c_decl_rend_list.append(  c_decl_tpl.render( param_val_list = vals, **p))
-            list_of_suffixes.append(vals)
-
-        c_base_rend = c_base_tpl.render()
-        cu_base_rend = cu_base_tpl.render()
-
+        #C/CUDA sources that are not based on inputs...
+        #TODO: stop using templates and just read from file?
+        #TODO: also, rename files and make them .c and .cu instead of .mako?
+        c_base_tpl = AspTemplate.Template(filename="templates/gaussian.mako")
+        c_base_rend  = c_base_tpl.render()
         GMM.asp_mod.module.add_to_module([Line(c_base_rend)])
+        cu_base_tpl = AspTemplate.Template(filename="templates/theta_kernel_base.mako")
+        cu_base_rend = cu_base_tpl.render()
         cuda_mod.add_to_module([Line(cu_base_rend)])
 
-        GMM.asp_mod.add_function_with_variants( c_main_rend_list, 
-                                                "train", 
-                                                [ 'train_'+'_'.join(vl) for vl in list_of_suffixes ], 
-                                                lambda name, *args, **kwargs: (name, args[0], args[1], args[2]) )
-        for rend in cu_kern_rend_list:
-            cuda_mod.add_to_module([Line(rend)])
-        for rend in c_decl_rend_list:
-            GMM.asp_mod.add_to_preamble(rend)
+        def render_and_add_to_module( param_dict ):
+            vals = param_dict.values()
+            c_main_rend  = c_main_tpl.render( param_val_list = vals, **param_dict)
+            cu_kern_rend = cu_kern_tpl.render( param_val_list = vals, **param_dict)
+            c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
+
+            cuda_mod.add_to_module([Line(cu_kern_rend)])
+            GMM.asp_mod.add_to_preamble(c_decl_rend)
+            GMM.asp_mod.add_function_with_variants( [c_main_rend], 
+                                                    "train", 
+                                                    [ 'train_'+'_'.join(param_dict.values()) ], 
+                                                    lambda name, *args, **kwargs: (name, args[0], args[1], args[2]) )
+
+        def generate_permutations ( key_arr, val_arr_arr, current, add_func):
+            idx = len(current)
+            name = key_arr[idx]
+            for v in val_arr_arr[idx]:
+                current[name]  = v
+                if idx == len(key_arr)-1:
+                    add_func(current)
+                else:
+                    generate_permutations(key_arr, val_arr_arr, current, add_func)
+            del current[name]
+
+        generate_permutations( self.variant_param_space.keys(), self.variant_param_space.values(), {}, render_and_add_to_module)
 
         # Add set GPU device function
         GMM.asp_mod.add_function("", fname="set_GPU_device")
