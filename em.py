@@ -70,7 +70,7 @@ class GMM(object):
             'diag_only': ['0'],
             'max_iters': ['10'],
             'min_iters': ['1'],
-            'covar_version_name': ['1', '2A', '2B', '3']
+            'covar_version_name': ['V1', 'V2A', 'V2B', 'V3']
     }
 
     #Flags to keep track of memory allocations, singletons
@@ -180,8 +180,11 @@ class GMM(object):
             GMM.asp_mod.add_to_preamble(c_decl_rend)
             GMM.asp_mod.add_function_with_variants( [c_main_rend], 
                                                     "train", 
-                                                    [ 'train_'+'_'.join(param_dict.values()) ], 
-                                                    lambda name, *args, **kwargs: (name, args[0], args[1], args[2]) )
+                                                    [ 'train_'+'_'.join(vals) ], 
+                                                    #[ 'train_'+'___'.join(['__'.join([k,v]) for k,v in param_dict.items()]) ],
+                                                    lambda name, *args, **kwargs: (name, args[0], args[1], args[2]),
+                                                    param_dict.keys()
+                                                  )
 
         def generate_permutations ( key_arr, val_arr_arr, current, add_func):
             idx = len(current)
