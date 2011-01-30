@@ -120,7 +120,8 @@ class GMM(object):
             self.get_asp_mod().dealloc_clusters_on_CPU()
             GMM.cluster_data_cpu_copy = None
 
-    def __init__(self, M, D, variant_param_space=None, means=None, covars=None, weights=None):
+    def __init__(self, M, D, variant_param_space=None, device=0, means=None, covars=None, weights=None):
+        self.device = 0
         self.M = M
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
@@ -171,7 +172,9 @@ class GMM(object):
         c_decl_tpl = AspTemplate.Template(filename="templates/gaussian_decl.mako") 
 
         def render_and_add_to_module( param_dict ):
-            vals = param_dict.values()
+            keys = param_dict.keys()
+            keys.sort()
+            vals = map(param_dict.get, keys) #gets vals based on alpha order of keys
             c_main_rend  = c_main_tpl.render( param_val_list = vals, **param_dict)
             cu_kern_rend = cu_kern_tpl.render( param_val_list = vals, **param_dict)
             c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
@@ -180,10 +183,10 @@ class GMM(object):
             GMM.asp_mod.add_to_preamble(c_decl_rend)
             GMM.asp_mod.add_function_with_variants( [c_main_rend], 
                                                     "train", 
-                                                    [ 'train_'+'_'.join(vals) ], 
+                                                    [ 'train_'+'_'.join(vals) ],
                                                     #[ 'train_'+'___'.join(['__'.join([k,v]) for k,v in param_dict.items()]) ],
                                                     lambda name, *args, **kwargs: (name, args[0], args[1], args[2]),
-                                                    param_dict.keys()
+                                                    keys
                                                   )
 
         def generate_permutations ( key_arr, val_arr_arr, current, add_func):
@@ -251,7 +254,7 @@ class GMM(object):
         GMM.asp_mod.toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
         nvcc_toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/egonina/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
 
-        GMM.asp_mod.set_GPU_device(0);        
+        GMM.asp_mod.set_GPU_device(self.device);        
         
         #print GMM.asp_mod.module.generate()
         GMM.asp_mod.compile()
