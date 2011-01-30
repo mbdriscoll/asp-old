@@ -8,15 +8,20 @@ from em import *
 
 class EMAutotuner(object):
 
-    def __init__(self, variant_param_space, input_param_space):
+    def __init__(self, variant_param_space, input_param_space, ifile_name, func_name, device_id, max_iters_per_point):
         fromfile = np.recfromcsv('IS1000a.csv', names=None, dtype=np.float32)
         self.orig_X = fromfile
+        self.ifile_name = ifile_name
+        self.func_name = func_name
+        self.device_id = device_id
         self.input_list = [] #tuple (M, X)
         self.shaped_Xs = {}
         self.variant_param_space = variant_param_space
-        self.variant_param_space_size = sum([len(v) for v in self.variant_param_space.values()])
+        self.variant_param_space_size = max_iters_per_point or reduce(lambda x, y: x*y, [len(v) for v in self.variant_param_space.values()])
         self.input_param_space = input_param_space
         self.generate_shaped_inputs(input_param_space.keys(), input_param_space.values(), {})
+        self.gmm = GMM(1, 1, self.variant_param_space, self.device_id)
+        mod = self.gmm.get_asp_mod()
 
     def add_to_input_list(self, param_dict):
         D = int(param_dict['D'])
@@ -37,17 +42,23 @@ class EMAutotuner(object):
         del current[name]
 
     def test_point(self, input_tuple):
-        self.gmm = GMM(input_tuple[0], input_tuple[1], self.variant_param_space)
-        likelihood = self.gmm.train(input_tuple[3])
+        self.gmm = GMM(input_tuple[0], input_tuple[1])
+        likelihood = getattr(self.gmm, self.func_name)(input_tuple[3])
 
     def search_space(self):
+        if self.ifile_name:
+            self.gmm.asp_mod.restore_func_variant_timings(self.func_name, self.ifile_name)
         for i in self.input_list:
             print "M=%d, D=%d, N=%d" % i[:3]
             for j in range(0, self.variant_param_space_size):
                 self.test_point(i)
-            self.gmm.asp_mod.save_func_variant_timings("train")    
+            self.gmm.asp_mod.save_func_variant_timings(self.func_name)    
 
 if __name__ == '__main__':
+    ifile_name = None #"data/285.210x16.train.vardump"
+    func_name = "train"
+    device_id = 0
+    max_iters_per_point = None #1
     variant_param_space = {
             'num_blocks_estep': ['16'],
             'num_threads_estep': ['512'],
@@ -65,6 +76,6 @@ if __name__ == '__main__':
             'N': np.arange(10000, 100001, 20000),
             'M': np.arange(1, 101, 20)
     }
-    emt = EMAutotuner(variant_param_space, input_param_space)
+    emt = EMAutotuner(variant_param_space, input_param_space, ifile_name, func_name, device_id, max_iters_per_point)
     emt.search_space()
  
