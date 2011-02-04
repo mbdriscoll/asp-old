@@ -35,12 +35,17 @@ clusters_t saved_clusters;
 clusters_t** scratch_cluster_arr; // for computing distances and merging
 static int num_scratch_clusters = 0;
 
+//CPU copies of eval data
 float *cluster_memberships;
+float *loglikelihoods;
 
 //GPU copies of clusters
 clusters_t temp_clusters;
 clusters_t* d_clusters;
+
+//GPU copies of eval data
 float *d_cluster_memberships;
+float *d_loglikelihoods;
 
 //=================================
 
@@ -173,6 +178,16 @@ void alloc_clusters_on_GPU(int original_num_clusters, int num_dimensions) {
   return;
 }
 
+// ================= Eval data alloc on CPU and GPU =============== 
+
+void alloc_evals_on_CPU(pyublas::numpy_array<float> cluster_mem_np_arr){
+  cluster_memberships = cluster_mem_np_arr.data();
+}
+
+void alloc_evals_on_GPU(int num_events, int num_clusters){
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*num_clusters));
+}
+
 // ======================== Copy event data from CPU to GPU ================
 void copy_event_data_CPU_to_GPU(int num_events, int num_dimensions) {
 
@@ -215,6 +230,11 @@ void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions) {
   return;
 }
 
+// ======================== Copy eval data from GPU to CPU ================
+void copy_evals_data_GPU_to_CPU(int num_events, int num_clusters){
+  CUDA_SAFE_CALL(cudaMemcpy(cluster_memberships, d_cluster_memberships, sizeof(float)*num_events*num_clusters, cudaMemcpyDeviceToHost));
+}
+
 // ================== Set the GPU Device ===================
 void set_GPU_device(int device) {
   // Set the device to run on... 0 for GTX 480, 1 for GTX 285 on oak
@@ -230,14 +250,14 @@ void set_GPU_device(int device) {
 }
 
 
-// ================== Event data allocation on CPU  ================= :
+// ================== Event data dellocation on CPU  ================= :
 void dealloc_events_on_CPU() {
   //free(fcs_data_by_event);
   free(fcs_data_by_dimension);
   return;
 }
 
-// ================== Event data allocation on GPU  ================= :
+// ================== Event data dellocation on GPU  ================= :
 void dealloc_events_on_GPU() {
   CUDA_SAFE_CALL(cudaFree(d_fcs_data_by_event));
   CUDA_SAFE_CALL(cudaFree(d_fcs_data_by_dimension));
@@ -274,9 +294,18 @@ void dealloc_clusters_on_GPU() {
   return;
 }
 
+// ==================== Eval data deallocation on CPU and GPU =================  
+void dealloc_evals_on_CPU() {
+  //free(cluster_memberships);
+  return;
+}
 
+void dealloc_evals_on_GPU() {
+  CUDA_SAFE_CALL(cudaFree(d_cluster_memberships));
+  return;
+}
 
-// Accessor functions for pi, means and covar
+// Accessor functions for pi, means, covars 
 
 pyublas::numpy_array<float> get_temp_cluster_pi(clusters_t* c){
   pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(1);

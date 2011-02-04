@@ -17,12 +17,6 @@ float train${'_'+'_'.join(param_val_list)} (
   scratch_cluster_arr = (clusters_t**)malloc(sizeof(clusters_t*)*num_clusters*num_clusters);
   
   int original_num_clusters = num_clusters; //should just %s/original_num/num/g
-
-  // ================= Cluster membership alloc on CPU and GPU =============== 
-  cluster_memberships = (float*) malloc(sizeof(float)*num_events*original_num_clusters);
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*original_num_clusters));
-  // ========================================================================= 
-  
    
   // ================= Temp buffer for codevar 2b ================ 
   float *temp_buffer_2b = NULL;
@@ -149,21 +143,14 @@ float train${'_'+'_'.join(param_val_list)} (
   //printf("DONE COMPUTING\n");
 
   copy_cluster_data_GPU_to_CPU(num_clusters, num_dimensions);
+  //copy_eval_data_GPU_to_CPU(num_events, num_clusters);
   
-  // cleanup host memory
-  free(likelihoods);
-  free(cluster_memberships);
-
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
 //TODO: free these  
 //zeroR_2b
 //temp_buffer_2b
 %endif
 
-  // cleanup GPU memory
-  cudaFree(d_likelihoods);
-  cudaFree(d_cluster_memberships);
-  
   return likelihood;
 
 }

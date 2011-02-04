@@ -55,16 +55,16 @@ class EMAutotuner(object):
             self.gmm.asp_mod.save_func_variant_timings(self.func_name)    
 
 if __name__ == '__main__':
-    ifile_name = None #"data/285.210x16.train.vardump"
+    ifile_name = ".aspcache/train.vardump" #"data/285.210x16.train.vardump"
     func_name = "train"
-    device_id = 0
+    device_id = 1
     max_iters_per_point = None #1
     variant_param_space = {
             'num_blocks_estep': ['16'],
-            'num_threads_estep': ['512'],
-            'num_threads_mstep': ['256','512'],
-            'num_event_blocks': ['32','128'],
-            'max_num_dimensions': ['50'],
+            'num_threads_estep': ['128','256','512'],
+            'num_threads_mstep': ['128','256','512'],
+            'num_event_blocks': ['32','64','128'],
+            'max_num_dimensions': ['45'],
             'max_num_clusters': ['128'],
             'diag_only': ['0'],
             'max_iters': ['10'],
@@ -72,9 +72,9 @@ if __name__ == '__main__':
             'covar_version_name': ['V1', 'V2A', 'V2B', 'V3']
     }
     input_param_space =  {
-            'D': np.arange(2, 40, 6),
+            'D': np.arange(2, 45, 4),
             'N': np.arange(10000, 100001, 20000),
-            'M': np.arange(1, 101, 20)
+            'M': np.arange(101, 111, 10)
     }
     emt = EMAutotuner(variant_param_space, input_param_space, ifile_name, func_name, device_id, max_iters_per_point)
     emt.search_space()
