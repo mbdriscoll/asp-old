@@ -55,8 +55,9 @@ void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster
 float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
 //end AHC functions
 
-//one default copy function to ensure CPU clusters are up to date
+//Copy functions to ensure CPU data structures are up to date
 void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions);
+void copy_evals_data_GPU_to_CPU(int num_events, int num_clusters);
 
 // Function prototypes
 void writeCluster(FILE* f, clusters_t clusters, int c,  int num_dimensions);
@@ -215,8 +216,6 @@ void copy_cluster_data_CPU_to_GPU(int num_clusters, int num_dimensions) {
 // ======================== Copy cluster data from GPU to CPU ================
 void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions) {
 
-  //printf("Copy clusters to GPU\n");
-// copy clusters from the device
   CUDA_SAFE_CALL(cudaMemcpy(&temp_clusters, d_clusters, sizeof(clusters_t),cudaMemcpyDeviceToHost));
   // copy all of the arrays from the structs
   CUDA_SAFE_CALL(cudaMemcpy(clusters.N, temp_clusters.N, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));

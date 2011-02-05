@@ -264,12 +264,12 @@ estep2${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, flo
             temp = expf(cluster_memberships[c*num_events+pixel]-max_likelihood);
             denominator_sum += temp;
         }
-        temp = max_likelihood + logf(denominator_sum);
-        thread_likelihood += temp;
+        denominator_sum = max_likelihood + logf(denominator_sum);
+        thread_likelihood += denominator_sum;
         
         // Divide by denominator, also effectively normalize probabilities
         for(int c=0; c<num_clusters; c++) {
-            cluster_memberships[c*num_events+pixel] = expf(cluster_memberships[c*num_events+pixel] - temp);
+            cluster_memberships[c*num_events+pixel] = expf(cluster_memberships[c*num_events+pixel] - denominator_sum);
             //printf("Probability that pixel #%d is in cluster #%d: %f\n",pixel,c,clusters->memberships[c*num_events+pixel]);
         }
     }

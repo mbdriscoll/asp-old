@@ -5,6 +5,7 @@ import itertools
 import sys
 import math
 import timeit
+import copy
 
 from em import *
 
@@ -21,122 +22,57 @@ def generate_synthetic_data(N):
 
 class EMTester(object):
 
-    def __init__(self, version_in, D, M, N):
-        self.version_in = version_in
-        self.M = M
-        self.D = D
-        self.N = N
-        self.gmm = GMM(M, D)
+    def __init__(self, from_file, variant_param_space, num_subps):
         
         self.results = {}
+        self.variant_param_space = variant_param_space
+        self.num_subplots = num_subps
+        self.plot_id = num_subps*100 + 11
         
-        fromgen = generate_synthetic_data(self.N)
-        fromfile = np.recfromcsv('IS1000a.csv', names=None, dtype=np.float32)
+        if from_file:
+            self.X = np.recfromcsv('IS1000a.csv', names=None, dtype=np.float32)
+            self.D = self.X.shape[0]
+            self.N = self.X.shape[1]
+        else:
+            self.D = 2
+            self.N = 600
+            self.X = generate_synthetic_data(self.N)
 
-        self.X = fromfile
+    def new_gmm(self, M):
+        self.M = M
+        self.gmm = GMM(self.M, self.D, self.variant_param_space)
 
     def test_pure_python(self):
         means, covars = self.gmm.train_using_python(self.X)
-        self.results['Pure'] = ('411', means, covars)
+        L, Y = self.gmm.eval_using_python(self.X)
+        #print "Pure:\n", Y
+        Y = Y.argmax(axis=1)
+        self.results['Pure'] = (str(self.plot_id), means, covars, Y)
+        self.plot_id += 1
 
-    def test_generated(self):        
-
+    def test_sejits(self):        
         likelihood = self.gmm.train(self.X)
+        #print "SEJITS train:\n", self.gmm.memberships
         means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D))
         covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
-        self.results['ASP v'+self.version_in] = ('412', means, covars)
+        L, Y = self.gmm.eval(self.X)
+        #print "SEJITS eval:\n", Y
+        Y = Y.argmax(axis=1)
+        if(self.plot_id % 10 <= self.num_subplots):
+            self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.D),str(self.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
+            self.plot_id += 1
         return likelihood
         
-
-    def test_train(self):
-        self.test_pure_python()
-        self.test_generated()
-
-
-    def test_merge(self):
-        self.merge_clusters()
-
-
-    def get_min_tuple(self, gmm_list):
-        length = len(gmm_list)
-        d_min, t_min = gmm_list[0];
-        if length > 1:
-            for d, t in gmm_list:
-                if(d<d_min):                
-                    d_min = d #find min
-                    t_min = t
-        return d_min, t_min
-        
-
-    def test_ahc(self):
-        self.test_pure_python()
-        # try one train and one merge
-
-        M_start = self.M
-        M_end = 0
-        rissanen_list = []
-        plot_counter = 2
-        
-
-        for M in reversed(range(M_end, M_start)):
-
-            print "======================== AHC loop: M = ", M, " ==========================="
-            likelihood = self.gmm.train(self.X)
-        
-            #plotting
-            means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D)).copy()
-            covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D)).copy()
-            self.results['ASP v'+self.version_in+' M: '+str(M)] = ('41'+str(plot_counter), means, covars)
-            plot_counter += 1
-
-            rissanen = -likelihood + 0.5*(self.gmm.M*(1+self.gmm.D+0.5*(self.gmm.D+1)*self.gmm.D)-1)*math.log(self.N*self.gmm.D);
-
-            #find closest clusters and merge
-            if M > 0: #don't merge if there is only one cluster
-                gmm_list = []
-                count = 2
-                for c1 in range(0, self.gmm.M):
-                    for c2 in range(c1+1, self.gmm.M):
-                        new_cluster, dist = self.gmm.compute_distance_rissanen(c1, c2)
-                        gmm_list.append((dist, (c1, c2, new_cluster)))
-                        print "gmm_list after append: ", gmm_list
-                        
-                #compute minimum distance
-                min_c1, min_c2, min_cluster = min(gmm_list, key=lambda gmm: gmm[0])[1]
-                self.gmm.merge_clusters(min_c1, min_c2, min_cluster)
-
-    def time_ahc(self):
-        M_start = self.M
-        M_end = 0
-        rissanen_list = []
-
-        for M in reversed(range(M_end, M_start)):
-
-            print "======================== AHC loop: M = ", M, " ==========================="
-            likelihood = self.gmm.train(self.X)
-            rissanen = -likelihood + 0.5*(self.gmm.M*(1+self.gmm.D+0.5*(self.gmm.D+1)*self.gmm.D)-1)*math.log(self.N*self.gmm.D);
-
-            #find closest clusters and merge
-            if M > 0: #don't merge if there is only one cluster
-                gmm_list = []
-                count = 2
-                for c1 in range(0, self.gmm.M):
-                    for c2 in range(c1+1, self.gmm.M):
-                        new_cluster, dist = self.gmm.compute_distance_rissanen(c1, c2)
-                        gmm_list.append((dist, (c1, c2, new_cluster)))
-                        
-                #compute minimum distance
-                min_c1, min_c2, min_cluster = min(gmm_list, key=lambda gmm: gmm[0])[1]
-                self.gmm.merge_clusters(min_c1, min_c2, min_cluster)
-
     def plot(self):
         for t, r in self.results.iteritems():
             splot = pl.subplot(r[0], title=t)
             color_iter = itertools.cycle (['r', 'g', 'b', 'c'])
-            pl.scatter(self.X.T[0], self.X.T[1], .8, color='k')
+            Y_ = r[3]
+            print t, ":\n", Y_
             for i, (mean, covar, color) in enumerate(zip(r[1], r[2], color_iter)):
                 v, w = np.linalg.eigh(covar)
                 u = w[0] / np.linalg.norm(w[0])
+                pl.scatter(self.X.T[0,Y_==i], self.X.T[1,Y_==i], .8, color=color)
                 angle = np.arctan(u[1]/u[0])
                 angle = 180 * angle / np.pi
                 ell = mpl.patches.Ellipse (mean, v[0], v[1], 180 + angle, color=color)
@@ -146,12 +82,32 @@ class EMTester(object):
         pl.show()
         
 if __name__ == '__main__':
-    emt = EMTester(sys.argv[1], 19, 16, 158256)
-    #emt.test_train()
+    num_subplots = 5
+    variant_param_space = {
+            'num_blocks_estep': ['16'],
+            'num_threads_estep': ['512'],
+            'num_threads_mstep': ['256'],
+            'num_event_blocks': ['128'],
+            'max_num_dimensions': ['50'],
+            'max_num_clusters': ['128'],
+            'diag_only': ['0'],
+            'max_iters': ['10'],
+            'min_iters': ['1'],
+            'covar_version_name': ['V1', 'V2A', 'V2B', 'V3']
+    }
+    emt = EMTester(False, variant_param_space, num_subplots)
+    emt.new_gmm(3)
+    emt.test_pure_python()
+    emt.test_sejits()
+    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
+    emt.test_sejits()
+    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
+    emt.test_sejits()
+    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
+    emt.test_sejits()
+    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
+    #print emt.gmm.asp_mod.compiled_methods_with_variants['train'].variant_times
+    #print emt.gmm.asp_mod.compiled_methods_with_variants['eval'].variant_times
+    emt.plot()
     #t = timeit.Timer(emt.test_pure_python)
-    t = timeit.Timer(emt.time_ahc)
-    print t.timeit(number=1)
-    #emt.gmm = GMM(3, 19, sys.argv[1])
-    #print t.timeit(number=1)
-    #emt.time_ahc()
  

@@ -49,6 +49,13 @@ class Clusters(object):
         np.delete(self.means, s_[new_M*D:])
         np.delete(self.covars, s_[new_M*D*D:])
         return self.weights, self.means, self.covars
+
+class EvalData(object):
+
+    def __init__(self, M, D, N):
+        self.memberships = np.empty(N*M, dtype=np.float32)
+        self.loglikelihood = np.empty(N, dtype=np.float32)
+        self.likelihood = 0.0
         
 class GMM(object):
 
@@ -140,12 +147,13 @@ class GMM(object):
             GMM.eval_data_cpu_copy = None
 
     def __init__(self, M, D, variant_param_space=None, device=0, means=None, covars=None, weights=None):
-        self.device = 0
+        self.device = device
         self.M = M
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
         self.clusters = Clusters(M, D, weights, means, covars)
         self.memberships = np.empty(M, dtype=np.float32)
+        self.clf = None # pure python mirror module
 
     #Called the first time a GMM instance tries to use a specialized function
     def initialize_asp_mod(self):
@@ -299,17 +307,28 @@ class GMM(object):
     
     def train_using_python(self, input_data):
         from scikits.learn import mixture
-        clf = mixture.GMM(n_states=self.M, cvtype='full')
-        clf.fit(input_data)
-        return clf.means, clf.covars
+        self.clf = mixture.GMM(n_states=self.M, cvtype='full')
+        self.clf.fit(input_data)
+        return self.clf.means, self.clf.covars
     
+    def eval_using_python(self, obs_data):
+        from scikits.learn import mixture
+        if self.clf is not None:
+            return self.clf.eval(obs_data)
+        else: return []
+
+    def predict_using_python(self, obs_data):
+        from scikits.learn import mixture
+        if self.clf is not None:
+            return self.clf.predict(obs_data)
+        else: return []
+
     def train(self, input_data):
         N = input_data.shape[0] #TODO: handle types other than np.array?
         #TODO: check that input_data.shape[1] == self.D?
         self.internal_alloc_event_data(input_data)
         self.internal_alloc_cluster_data()
         self.internal_alloc_eval_data(input_data)
-
         self.likelihood = self.get_asp_mod().train(self.M, self.D, N, input_data)
         return self
 
@@ -318,8 +337,9 @@ class GMM(object):
         #TODO: check that input_data.shape[1] == self.D?
         self.internal_alloc_event_data(obs_data)
         self.internal_alloc_eval_data(obs_data)
-        #TODO: check that cluster_data_gpu_copy and cluster_data_cpu_copy are True and data is identical
-        logprob, posteriors = self.get_asp_mod().eval(self.M, self.D, N, obs_data)
+        self.likelihood = self.get_asp_mod().eval(self.M, self.D, N, obs_data)
+        logprob = []
+        posteriors = self.memberships
         return logprob, posteriors # N log probabilities, NxM posterior probabilities for each component
 
     def score(self, obs_data):

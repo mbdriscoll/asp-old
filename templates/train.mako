@@ -143,7 +143,7 @@ float train${'_'+'_'.join(param_val_list)} (
   //printf("DONE COMPUTING\n");
 
   copy_cluster_data_GPU_to_CPU(num_clusters, num_dimensions);
-  //copy_eval_data_GPU_to_CPU(num_events, num_clusters);
+  copy_evals_data_GPU_to_CPU(num_events, num_clusters);
   
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
 //TODO: free these  

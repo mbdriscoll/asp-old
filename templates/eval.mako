@@ -6,13 +6,18 @@ float eval${'_'+'_'.join(param_val_list)} (
                              pyublas::numpy_array<float> obs_data ) 
 {
   float likelihood;
-  // Used to hold the result from regroup kernel
   float* likelihoods = (float*) malloc(sizeof(float)*${num_blocks_estep});
   float* d_likelihoods;
   CUDA_SAFE_CALL(cudaMalloc((void**) &d_likelihoods, sizeof(float)*${num_blocks_estep}));
 
+  //TODO: Is this necessary, or can we assume the values are still set?
+  // Computes the R matrix inverses, and the gaussian constant
+  constants_kernel_launch${'_'+'_'.join(param_val_list)}(d_clusters,num_clusters,num_dimensions);
+  cudaThreadSynchronize();
+  CUT_CHECK_ERROR("Constants Kernel execution failed: ");
+
   estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
-  //cudaThreadSynchronize();
+  cudaThreadSynchronize();
 
   estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
   cudaThreadSynchronize();
