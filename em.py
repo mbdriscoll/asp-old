@@ -132,7 +132,7 @@ class GMM(object):
         if GMM.eval_data_gpu_copy is None or GMM.eval_data_gpu_copy.shape != (X.shape[0], self.M):
             if GMM.eval_data_gpu_copy is not None:
                 self.internal_free_eval_data()
-            self.memberships.resize((X.shape[0], self.M))
+            self.memberships.resize((self.M, X.shape[0]))
             self.get_asp_mod().alloc_evals_on_GPU(X.shape[0], self.M)
             self.get_asp_mod().alloc_evals_on_CPU(self.memberships)
             GMM.eval_data_gpu_copy = self.memberships
@@ -352,7 +352,7 @@ class GMM(object):
 
     def predict(self, obs_data):
         logprob, posteriors = self.eval(obs_data)
-        return posteriors.argmax(axis=1) # N indexes of most likely components
+        return posteriors.argmax(axis=0) # N indexes of most likely components
 
     def merge_clusters(self, min_c1, min_c2, min_cluster):
         self.get_asp_mod().merge_clusters(min_c1, min_c2, min_cluster, self.M, self.D)

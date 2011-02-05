@@ -44,20 +44,15 @@ class EMTester(object):
 
     def test_pure_python(self):
         means, covars = self.gmm.train_using_python(self.X)
-        L, Y = self.gmm.eval_using_python(self.X)
-        #print "Pure:\n", Y
-        Y = Y.argmax(axis=1)
-        self.results['Pure'] = (str(self.plot_id), means, covars, Y)
+        Y = self.gmm.predict_using_python(self.X)
+        self.results['Pure'] = (str(self.plot_id), means, covars, Y.T)
         self.plot_id += 1
 
     def test_sejits(self):        
         likelihood = self.gmm.train(self.X)
-        #print "SEJITS train:\n", self.gmm.memberships
         means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D))
         covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
-        L, Y = self.gmm.eval(self.X)
-        #print "SEJITS eval:\n", Y
-        Y = Y.argmax(axis=1)
+        Y = self.gmm.predict(self.X)
         if(self.plot_id % 10 <= self.num_subplots):
             self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.D),str(self.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
             self.plot_id += 1
@@ -68,7 +63,6 @@ class EMTester(object):
             splot = pl.subplot(r[0], title=t)
             color_iter = itertools.cycle (['r', 'g', 'b', 'c'])
             Y_ = r[3]
-            print t, ":\n", Y_
             for i, (mean, covar, color) in enumerate(zip(r[1], r[2], color_iter)):
                 v, w = np.linalg.eigh(covar)
                 u = w[0] / np.linalg.norm(w[0])
@@ -99,13 +93,9 @@ if __name__ == '__main__':
     emt.new_gmm(3)
     emt.test_pure_python()
     emt.test_sejits()
-    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
     emt.test_sejits()
-    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
     emt.test_sejits()
-    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
     emt.test_sejits()
-    print emt.gmm.clusters.means.reshape((emt.gmm.M, emt.gmm.D))
     #print emt.gmm.asp_mod.compiled_methods_with_variants['train'].variant_times
     #print emt.gmm.asp_mod.compiled_methods_with_variants['eval'].variant_times
     emt.plot()
