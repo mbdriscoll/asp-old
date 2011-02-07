@@ -14,40 +14,25 @@ class Clusters(object):
     
     def __init__(self, M, D, weights = None, means = None, covars = None):
 
+        self.M = M
+        self.D = D
         self.weights = np.empty(M, dtype=np.float32)
         self.means = np.empty(M*D, dtype=np.float32)
         self.covars = np.empty(M*D*D, dtype=np.float32)
 
-        # if weights is None:
-        #     self.weights = self.init_random_weights(M)
-        # else:
-        #     self.weights = weights.copy(deep=True)    
-            
-        # if means is None:
-        #     self.means = self.init_random_means(M, D)
-        # else:
-        #     self.means = means.copy(deep=True)
-                    
-        # if covars is None:
-        #     self.covars = self.init_random_covars(M, D)
-        # else:
-        #     self.covars = covars.copy(deep=True)
+    def init_random_weights(self):
+        return numpy.random.random((self.M))
 
-    #TODO: use self.M and self.D instead?
-    def init_random_weights(self, M):
-        return numpy.random.random((M))
+    def init_random_means(self):
+        return numpy.random.random((self.M,self.D))
 
-    def init_random_means(self, M, D):
-        return numpy.random.random((M,D))
+    def init_random_covars(self):
+        return numpy.random.random((self.M, self.D, self.D))
 
-    def init_random_covars(self, M, D):
-        return numpy.random.random((M, D, D))
-
-    #TODO: this is inefficient - can we get away with no copy?
-    def shrink_clusters(self, new_M, D):
+    def shrink_clusters(self, new_M):
         np.delete(self.weights, s_[new_M:])
-        np.delete(self.means, s_[new_M*D:])
-        np.delete(self.covars, s_[new_M*D*D:])
+        np.delete(self.means, s_[new_M*self.D:])
+        np.delete(self.covars, s_[new_M*self.D*self.D:])
         return self.weights, self.means, self.covars
 
 class EvalData(object):
@@ -366,7 +351,7 @@ class GMM(object):
     def merge_clusters(self, min_c1, min_c2, min_cluster):
         self.get_asp_mod().merge_clusters(min_c1, min_c2, min_cluster, self.M, self.D)
         self.M -= 1
-        w, m, c = self.clusters.shrink_clusters(self.M, self.D)
+        w, m, c = self.clusters.shrink_clusters(self.M)
         self.get_asp_mod().relink_clusters_on_CPU(w, m, c)
         self.get_asp_mod().dealloc_temp_clusters_on_CPU()
         return 
