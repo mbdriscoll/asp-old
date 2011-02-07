@@ -207,7 +207,6 @@ class GMM(object):
             GMM.asp_mod.add_function_with_variants( [c_train_rend], 
                                                     "train", 
                                                     [ 'train_'+'_'.join(vals) ],
-                                                    #[ 'train_'+'___'.join(['__'.join([k,v]) for k,v in param_dict.items()]) ],
                                                     lambda name, *args, **kwargs: (name, args[0], args[1], args[2]),
                                                     keys
                                                   )
@@ -319,7 +318,8 @@ class GMM(object):
 
     def train(self, input_data):
         N = input_data.shape[0] #TODO: handle types other than np.array?
-        #TODO: check that input_data.shape[1] == self.D?
+        if input_data.shape[1] != self.D:
+            print "Error: Data has %d features, model expects %d features." % (input_data.shape[1], self.D)
         self.internal_alloc_event_data(input_data)
         self.internal_alloc_eval_data(input_data)
         self.internal_alloc_cluster_data()
@@ -328,7 +328,8 @@ class GMM(object):
 
     def eval(self, obs_data):
         N = obs_data.shape[0]
-        #TODO: check that input_data.shape[1] == self.D?
+        if obs_data.shape[1] != self.D:
+            print "Error: Data has %d features, model expects %d features." % (obs_data.shape[1], self.D)
         self.internal_alloc_event_data(obs_data)
         self.internal_alloc_eval_data(obs_data)
         self.eval_data.likelihood = self.get_asp_mod().eval(self.M, self.D, N, obs_data)
