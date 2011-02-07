@@ -181,12 +181,14 @@ void alloc_clusters_on_GPU(int original_num_clusters, int num_dimensions) {
 
 // ================= Eval data alloc on CPU and GPU =============== 
 
-void alloc_evals_on_CPU(pyublas::numpy_array<float> cluster_mem_np_arr){
+void alloc_evals_on_CPU(pyublas::numpy_array<float> cluster_mem_np_arr, pyublas::numpy_array<float> loglikelihoods_np_arr){
   cluster_memberships = cluster_mem_np_arr.data();
+  loglikelihoods = loglikelihoods_np_arr.data();
 }
 
 void alloc_evals_on_GPU(int num_events, int num_clusters){
   CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_loglikelihoods),sizeof(float)*num_events));
 }
 
 // ======================== Copy event data from CPU to GPU ================
@@ -232,6 +234,7 @@ void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions) {
 // ======================== Copy eval data from GPU to CPU ================
 void copy_evals_data_GPU_to_CPU(int num_events, int num_clusters){
   CUDA_SAFE_CALL(cudaMemcpy(cluster_memberships, d_cluster_memberships, sizeof(float)*num_events*num_clusters, cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(loglikelihoods, d_loglikelihoods, sizeof(float)*num_events, cudaMemcpyDeviceToHost));
 }
 
 // ================== Set the GPU Device ===================
@@ -296,11 +299,13 @@ void dealloc_clusters_on_GPU() {
 // ==================== Eval data deallocation on CPU and GPU =================  
 void dealloc_evals_on_CPU() {
   //free(cluster_memberships);
+  //free(loglikelihoods);
   return;
 }
 
 void dealloc_evals_on_GPU() {
   CUDA_SAFE_CALL(cudaFree(d_cluster_memberships));
+  CUDA_SAFE_CALL(cudaFree(d_loglikelihoods));
   return;
 }
 

@@ -16,9 +16,7 @@ float eval${'_'+'_'.join(param_val_list)} (
   cudaThreadSynchronize();
   CUT_CHECK_ERROR("Constants Kernel execution failed: ");
 
-  estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
-  cudaThreadSynchronize();
-
+  estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters,d_loglikelihoods);
   estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
   cudaThreadSynchronize();
 

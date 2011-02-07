@@ -52,11 +52,21 @@ class Clusters(object):
 
 class EvalData(object):
 
-    def __init__(self, M, D, N):
-        self.memberships = np.empty(N*M, dtype=np.float32)
-        self.loglikelihood = np.empty(N, dtype=np.float32)
+    def __init__(self, N, M):
+        self.N = N
+        self.M = M
+        self.memberships = np.zeros((M,N), dtype=np.float32)
+        self.loglikelihoods = np.zeros(N, dtype=np.float32)
         self.likelihood = 0.0
-        
+
+    def resize(self, N, M):
+        self.memberships.resize((M,N))
+        self.memberships = np.ascontiguousarray(self.memberships)
+        self.loglikelihoods.resize(N)
+        self.loglikelihoods = np.ascontiguousarray(self.loglikelihoods)
+        self.M = M
+        self.N = N
+
 class GMM(object):
 
     #Singleton ASP mode shared by all instances of GMM
@@ -127,16 +137,14 @@ class GMM(object):
             GMM.cluster_data_cpu_copy = None
 
     def internal_alloc_eval_data(self, X):
-        #TODO: test for not null
-        #if not self.clusters.weights.size: return
-        if GMM.eval_data_gpu_copy is None or GMM.eval_data_gpu_copy.shape != (X.shape[0], self.M):
+        if self.eval_data.M != self.M or self.eval_data.N != X.shape[0] or GMM.eval_data_gpu_copy != self.eval_data:
             if GMM.eval_data_gpu_copy is not None:
                 self.internal_free_eval_data()
-            self.memberships.resize((self.M, X.shape[0]))
+            self.eval_data.resize(X.shape[0], self.M)
             self.get_asp_mod().alloc_evals_on_GPU(X.shape[0], self.M)
-            self.get_asp_mod().alloc_evals_on_CPU(self.memberships)
-            GMM.eval_data_gpu_copy = self.memberships
-            GMM.eval_data_cpu_copy = self.memberships
+            self.get_asp_mod().alloc_evals_on_CPU(self.eval_data.memberships, self.eval_data.loglikelihoods)
+            GMM.eval_data_gpu_copy = self.eval_data
+            GMM.eval_data_cpu_copy = self.eval_data
             
     def internal_free_eval_data(self):
         if GMM.eval_data_gpu_copy is not None:
@@ -152,7 +160,7 @@ class GMM(object):
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
         self.clusters = Clusters(M, D, weights, means, covars)
-        self.memberships = np.empty(M, dtype=np.float32)
+        self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
 
     #Called the first time a GMM instance tries to use a specialized function
@@ -287,7 +295,7 @@ class GMM(object):
             return join(pathname, "core", "include")
 
         nvcc_toolchain = GMM.asp_mod.nvcc_toolchain
-        nvcc_toolchain.cflags += ["-arch=sm_20"]
+        nvcc_toolchain.cflags += ["-arch=sm_13" if self.device else "-arch=sm_20"]
         GMM.asp_mod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
         nvcc_toolchain.add_library("project",['.','./include'],[],[])
 
@@ -304,6 +312,7 @@ class GMM(object):
     def __del__(self):
         self.internal_free_event_data()
         self.internal_free_cluster_data()
+        self.internal_free_eval_data()
     
     def train_using_python(self, input_data):
         from scikits.learn import mixture
@@ -327,9 +336,9 @@ class GMM(object):
         N = input_data.shape[0] #TODO: handle types other than np.array?
         #TODO: check that input_data.shape[1] == self.D?
         self.internal_alloc_event_data(input_data)
-        self.internal_alloc_cluster_data()
         self.internal_alloc_eval_data(input_data)
-        self.likelihood = self.get_asp_mod().train(self.M, self.D, N, input_data)
+        self.internal_alloc_cluster_data()
+        self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, N, input_data)
         return self
 
     def eval(self, obs_data):
@@ -337,9 +346,9 @@ class GMM(object):
         #TODO: check that input_data.shape[1] == self.D?
         self.internal_alloc_event_data(obs_data)
         self.internal_alloc_eval_data(obs_data)
-        self.likelihood = self.get_asp_mod().eval(self.M, self.D, N, obs_data)
-        logprob = []
-        posteriors = self.memberships
+        self.eval_data.likelihood = self.get_asp_mod().eval(self.M, self.D, N, obs_data)
+        logprob = self.eval_data.loglikelihoods
+        posteriors = self.eval_data.memberships
         return logprob, posteriors # N log probabilities, NxM posterior probabilities for each component
 
     def score(self, obs_data):
@@ -348,7 +357,7 @@ class GMM(object):
 
     def decode(self, obs_data):
         logprob, posteriors = self.eval(obs_data)
-        return logprob, posteriors.argmax(axis=1) # N log probabilities, N indexes of most likely components 
+        return logprob, posteriors.argmax(axis=0) # N log probabilities, N indexes of most likely components 
 
     def predict(self, obs_data):
         logprob, posteriors = self.eval(obs_data)

@@ -58,8 +58,9 @@ float train${'_'+'_'.join(param_val_list)} (
         
   //================================== EM INITIALIZE =======================
 
-  estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
+  estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters,d_loglikelihoods);
   //cudaThreadSynchronize();
+  CUT_CHECK_ERROR("Kernel execution failed");
 
   estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
   cudaThreadSynchronize();
@@ -114,7 +115,7 @@ float train${'_'+'_'.join(param_val_list)} (
 
     //regroup = E step
     // Compute new cluster membership probabilities for all the events
-    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters);
+    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters,d_loglikelihoods);
 
     estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
     cudaThreadSynchronize();

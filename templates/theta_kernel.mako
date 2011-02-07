@@ -157,7 +157,7 @@ __device__ void compute_indices${'_'+'_'.join(param_val_list)}(int num_events, i
 }
 
 __global__ void
-estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float *cluster_memberships, int num_dimensions, int num_events, float* likelihood) {
+estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float *cluster_memberships, int num_dimensions, int num_events, float* likelihood, float* loglikelihoods) {
     
     // Cached cluster parameters
     __shared__ float means[${max_num_dimensions}];
@@ -215,6 +215,7 @@ estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, flo
                 }
             }
         #endif
+        loglikelihoods[event] = like;
         cluster_memberships[c*num_events+event] = -0.5f * like + constant + logf(cluster_pi); // numerator of the probability computation
     }
 }
@@ -783,9 +784,9 @@ void seed_clusters_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_ev
   seed_clusters${'_'+'_'.join(param_val_list)}<<< 1, ${num_threads_mstep} >>>( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);
 }
 
-void estep1_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters)
+void estep1_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters, float* d_loglikelihoods)
 {
-  estep1${'_'+'_'.join(param_val_list)}<<<dim3(${num_blocks_estep},num_clusters), ${num_threads_estep}>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_events,d_likelihoods);
+  estep1${'_'+'_'.join(param_val_list)}<<<dim3(${num_blocks_estep},num_clusters), ${num_threads_estep}>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_events,d_likelihoods, d_loglikelihoods);
 }
 
 void estep2_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods)
