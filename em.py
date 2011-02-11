@@ -16,9 +16,9 @@ class Components(object):
 
         self.M = M
         self.D = D
-        self.weights = np.empty(M, dtype=np.float32)
-        self.means = np.empty(M*D, dtype=np.float32)
-        self.covars = np.empty(M*D*D, dtype=np.float32)
+        self.weights = weights or np.empty(M, dtype=np.float32)
+        self.means = means or np.empty(M*D, dtype=np.float32)
+        self.covars = covars or np.empty(M*D*D, dtype=np.float32)
 
     def init_random_weights(self):
         return numpy.random.random((self.M))
@@ -30,9 +30,9 @@ class Components(object):
         return numpy.random.random((self.M, self.D, self.D))
 
     def shrink_components(self, new_M):
-        self.weights = np.delete(self.weights, np.s_[new_M:])
-        self.means = np.delete(self.means, np.s_[new_M*self.D:])
-        self.covars = np.delete(self.covars, np.s_[new_M*self.D*self.D:])
+        self.weights = np.resize(self.weights, new_M) #= np.delete(self.weights, np.s_[new_M:])
+        self.means = np.resize(self.means, new_M*self.D) #= np.delete(self.means, np.s_[new_M*self.D:])
+        self.covars = np.resize(self.covars, new_M*self.D*self.D) #= np.delete(self.covars, np.s_[new_M*self.D*self.D:])
 
 class EvalData(object):
 
@@ -362,12 +362,26 @@ class GMM(object):
         dist = self.get_asp_mod().compiled_module.component_distance.distance
         return new_component, dist
 
-    def compute_distance_BIC(self, c1, c3):
-        pass #TODO
-
     def get_new_component_means(self, new_component):
         return self.get_asp_mod().get_temp_component_means(new_component, self.D).reshape((1, self.D))
 
     def get_new_component_covars(self, new_component):
         return self.get_asp_mod().get_temp_component_covars(new_component, self.D).reshape((1, self.D, self.D))
     
+def compute_distance_BIC(gmm1, gmm2, data):
+    cd1_M = gmm1.M
+    cd2_M = gmm2.M
+    nComps = cd1_M + cd2_M
+
+    ratio1 = float(cd1_M)/float(nComps)
+    ratio2 = float(cd2_M)/float(nComps)
+
+    w = np.append(ratio1*gmm1.components.weights, ratio2*gmm2.components.weights)
+    m = np.append(gmm1.components.means, gmm2.components.means)
+    c = np.append(gmm1.components.covarss, gmm2.components.covars)
+    temp_GMM = GMM(nComps, gmm1.D, w, m, c)
+
+    temp_GMM.train(data)
+
+    return temp_GMM.eval_data.likelihood - (gmm1.eval_data.likelihood + gmm2.eval_data.likelihood)
+
