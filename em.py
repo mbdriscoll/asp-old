@@ -30,9 +30,9 @@ class Components(object):
         return numpy.random.random((self.M, self.D, self.D))
 
     def shrink_components(self, new_M):
-        self.weights = np.resize(self.weights, new_M) #= np.delete(self.weights, np.s_[new_M:])
-        self.means = np.resize(self.means, new_M*self.D) #= np.delete(self.means, np.s_[new_M*self.D:])
-        self.covars = np.resize(self.covars, new_M*self.D*self.D) #= np.delete(self.covars, np.s_[new_M*self.D*self.D:])
+        self.weights = np.resize(self.weights, new_M) 
+        self.means = np.resize(self.means, new_M*self.D) 
+        self.covars = np.resize(self.covars, new_M*self.D*self.D)
 
 class EvalData(object):
 
@@ -331,6 +331,7 @@ class GMM(object):
             print "Error: Data has %d features, model expects %d features." % (obs_data.shape[1], self.D)
         self.internal_alloc_event_data(obs_data)
         self.internal_alloc_eval_data(obs_data)
+        self.internal_alloc_component_data()
         self.eval_data.likelihood = self.get_asp_mod().eval(self.M, self.D, N, obs_data)
         logprob = self.eval_data.loglikelihoods
         posteriors = self.eval_data.memberships
