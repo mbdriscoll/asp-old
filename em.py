@@ -10,7 +10,7 @@ import sys
 from imp import find_module
 from os.path import join
 
-class Clusters(object):
+class Components(object):
     
     def __init__(self, M, D, weights = None, means = None, covars = None):
 
@@ -30,10 +30,9 @@ class Clusters(object):
         return numpy.random.random((self.M, self.D, self.D))
 
     def shrink_components(self, new_M):
-        np.delete(self.weights, s_[new_M:])
-        np.delete(self.means, s_[new_M*self.D:])
-        np.delete(self.covars, s_[new_M*self.D*self.D:])
-        return self.weights, self.means, self.covars
+        self.weights = np.delete(self.weights, np.s_[new_M:])
+        self.means = np.delete(self.means, np.s_[new_M*self.D:])
+        self.covars = np.delete(self.covars, np.s_[new_M*self.D*self.D:])
 
 class EvalData(object):
 
@@ -144,7 +143,7 @@ class GMM(object):
         self.M = M
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
-        self.components = Clusters(M, D, weights, means, covars)
+        self.components = Components(M, D, weights, means, covars)
         self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
 
@@ -263,7 +262,7 @@ class GMM(object):
         GMM.asp_mod.add_function("", fname="merge_components")
 
         #Add Boost interface links for components and distance objects
-        GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Clusters");
+        GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
             boost::python::scope().attr("components") = boost::python::object(boost::python::ptr(&components));""")
         GMM.asp_mod.add_to_init("""boost::python::class_<return_component_container>("ReturnClusterContainer")
             .def(pyublas::by_value_rw_member( "new_component", &return_component_container::component))
@@ -350,11 +349,11 @@ class GMM(object):
         return posteriors.argmax(axis=0) # N indexes of most likely components
 
     def merge_components(self, min_c1, min_c2, min_component):
+        self.get_asp_mod().dealloc_temp_components_on_CPU()
         self.get_asp_mod().merge_components(min_c1, min_c2, min_component, self.M, self.D)
         self.M -= 1
-        w, m, c = self.components.shrink_components(self.M)
-        self.get_asp_mod().relink_components_on_CPU(w, m, c)
-        self.get_asp_mod().dealloc_temp_components_on_CPU()
+        self.components.shrink_components(self.M)
+        self.get_asp_mod().relink_components_on_CPU(self.components.weights, self.components.means, self.components.covars)
         return 
 
     def compute_distance_rissanen(self, c1, c2):

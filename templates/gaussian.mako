@@ -91,6 +91,7 @@ for(int i = 0; i<num_scratch_components; i++) {
   free(scratch_component_arr[i]->R);
   free(scratch_component_arr[i]->Rinv);
   }
+  num_scratch_components = 0;
 
   return;
 }
