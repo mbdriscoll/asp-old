@@ -42,8 +42,8 @@ class EMTester(object):
     def test_generated(self):        
 
         likelihood = self.gmm.train(self.X)
-        means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D))
-        covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
+        means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
+        covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
         self.results['ASP v'+self.version_in] = ('412', means, covars)
         return likelihood
         
@@ -54,7 +54,7 @@ class EMTester(object):
 
 
     def test_merge(self):
-        self.merge_clusters()
+        self.merge_components()
 
     def test_ahc(self):
         self.test_pure_python()
@@ -71,24 +71,24 @@ class EMTester(object):
             self.gmm.train(self.X)
         
             #plotting
-            means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D)).copy()
-            covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D)).copy()
+            means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D)).copy()
+            covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D)).copy()
             self.results['ASP v'+self.version_in+' M: '+str(M)] = ('41'+str(plot_counter), means, covars)
             plot_counter += 1
 
-            #find closest clusters and merge
-            if M > 0: #don't merge if there is only one cluster
+            #find closest components and merge
+            if M > 0: #don't merge if there is only one component
                 gmm_list = []
                 count = 2
                 for c1 in range(0, self.gmm.M):
                     for c2 in range(c1+1, self.gmm.M):
-                        new_cluster, dist = self.gmm.compute_distance_rissanen(c1, c2)
-                        gmm_list.append((dist, (c1, c2, new_cluster)))
+                        new_component, dist = self.gmm.compute_distance_rissanen(c1, c2)
+                        gmm_list.append((dist, (c1, c2, new_component)))
                         print "gmm_list after append: ", gmm_list
                         
                 #compute minimum distance
-                min_c1, min_c2, min_cluster = min(gmm_list, key=lambda gmm: gmm[0])[1]
-                self.gmm.merge_clusters(min_c1, min_c2, min_cluster)
+                min_c1, min_c2, min_component = min(gmm_list, key=lambda gmm: gmm[0])[1]
+                self.gmm.merge_components(min_c1, min_c2, min_component)
 
     def time_ahc(self):
         M_start = self.M
@@ -99,18 +99,18 @@ class EMTester(object):
             print "======================== AHC loop: M = ", M, " ==========================="
             self.gmm.train(self.X)
 
-            #find closest clusters and merge
-            if M > 0: #don't merge if there is only one cluster
+            #find closest components and merge
+            if M > 0: #don't merge if there is only one component
                 gmm_list = []
                 count = 2
                 for c1 in range(0, self.gmm.M):
                     for c2 in range(c1+1, self.gmm.M):
-                        new_cluster, dist = self.gmm.compute_distance_rissanen(c1, c2)
-                        gmm_list.append((dist, (c1, c2, new_cluster)))
+                        new_component, dist = self.gmm.compute_distance_rissanen(c1, c2)
+                        gmm_list.append((dist, (c1, c2, new_component)))
                         
                 #compute minimum distance
-                min_c1, min_c2, min_cluster = min(gmm_list, key=lambda gmm: gmm[0])[1]
-                self.gmm.merge_clusters(min_c1, min_c2, min_cluster)
+                min_c1, min_c2, min_component = min(gmm_list, key=lambda gmm: gmm[0])[1]
+                self.gmm.merge_components(min_c1, min_c2, min_component)
 
     def plot(self):
         for t, r in self.results.iteritems():

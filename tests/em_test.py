@@ -50,8 +50,8 @@ class EMTester(object):
 
     def test_sejits(self):        
         likelihood = self.gmm.train(self.X)
-        means = self.gmm.clusters.means.reshape((self.gmm.M, self.gmm.D))
-        covars = self.gmm.clusters.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
+        means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
+        covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
         Y = self.gmm.predict(self.X)
         if(self.plot_id % 10 <= self.num_subplots):
             self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.D),str(self.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
@@ -83,7 +83,7 @@ if __name__ == '__main__':
             'num_threads_mstep': ['256'],
             'num_event_blocks': ['128'],
             'max_num_dimensions': ['50'],
-            'max_num_clusters': ['128'],
+            'max_num_components': ['128'],
             'diag_only': ['0'],
             'max_iters': ['10'],
             'min_iters': ['1'],

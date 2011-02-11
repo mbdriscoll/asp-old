@@ -10,9 +10,9 @@
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
 
-typedef struct return_cluster_container
+typedef struct return_component_container
 {
-  boost::python::object cluster;
+  boost::python::object component;
   //pyublas::numpy_array<float> distance;
   float distance;
 } ret_c_con_t;
@@ -29,67 +29,67 @@ float *fcs_data_by_dimension;
 float* d_fcs_data_by_event;
 float* d_fcs_data_by_dimension;
 
-//CPU copies of clusters
-clusters_t clusters;
-clusters_t saved_clusters;
-clusters_t** scratch_cluster_arr; // for computing distances and merging
-static int num_scratch_clusters = 0;
+//CPU copies of components
+components_t components;
+components_t saved_components;
+components_t** scratch_component_arr; // for computing distances and merging
+static int num_scratch_components = 0;
 
 //CPU copies of eval data
-float *cluster_memberships;
+float *component_memberships;
 float *loglikelihoods;
 
-//GPU copies of clusters
-clusters_t temp_clusters;
-clusters_t* d_clusters;
+//GPU copies of components
+components_t temp_components;
+components_t* d_components;
 
 //GPU copies of eval data
-float *d_cluster_memberships;
+float *d_component_memberships;
 float *d_loglikelihoods;
 
 //=================================
 
 //AHC functions
-void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int num_dimensions);
-void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
-float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions);
+void copy_component(components_t *dest, int c_dest, components_t *src, int c_src, int num_dimensions);
+void add_components(components_t *components, int c1, int c2, components_t *temp_component, int num_dimensions);
+float component_distance(components_t *components, int c1, int c2, components_t *temp_component, int num_dimensions);
 //end AHC functions
 
 //Copy functions to ensure CPU data structures are up to date
-void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions);
-void copy_evals_data_GPU_to_CPU(int num_events, int num_clusters);
+void copy_component_data_GPU_to_CPU(int num_components, int num_dimensions);
+void copy_evals_data_GPU_to_CPU(int num_events, int num_components);
 
 // Function prototypes
-void writeCluster(FILE* f, clusters_t clusters, int c,  int num_dimensions);
-void printCluster(clusters_t clusters, int c, int num_dimensions);
+void writeCluster(FILE* f, components_t components, int c,  int num_dimensions);
+void printCluster(components_t components, int c, int num_dimensions);
 void invert_cpu(float* data, int actualsize, float* log_determinant);
 int invert_matrix(float* a, int n, float* determinant);
 
-clusters_t* alloc_temp_cluster_on_CPU(int num_dimensions) {
+components_t* alloc_temp_component_on_CPU(int num_dimensions) {
 
-  clusters_t* scratch_cluster = (clusters_t*)malloc(sizeof(clusters_t));
+  components_t* scratch_component = (components_t*)malloc(sizeof(components_t));
 
-  scratch_cluster->N = (float*) malloc(sizeof(float));
-  scratch_cluster->pi = (float*) malloc(sizeof(float));
-  scratch_cluster->constant = (float*) malloc(sizeof(float));
-  scratch_cluster->avgvar = (float*) malloc(sizeof(float));
-  scratch_cluster->means = (float*) malloc(sizeof(float)*num_dimensions);
-  scratch_cluster->R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
-  scratch_cluster->Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
+  scratch_component->N = (float*) malloc(sizeof(float));
+  scratch_component->pi = (float*) malloc(sizeof(float));
+  scratch_component->constant = (float*) malloc(sizeof(float));
+  scratch_component->avgvar = (float*) malloc(sizeof(float));
+  scratch_component->means = (float*) malloc(sizeof(float)*num_dimensions);
+  scratch_component->R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
+  scratch_component->Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
 
-  return scratch_cluster;
+  return scratch_component;
 }
 
-void dealloc_temp_clusters_on_CPU() {
+void dealloc_temp_components_on_CPU() {
 
-for(int i = 0; i<num_scratch_clusters; i++) {
-  free(scratch_cluster_arr[i]->N);
-  free(scratch_cluster_arr[i]->pi);
-  free(scratch_cluster_arr[i]->constant);
-  free(scratch_cluster_arr[i]->avgvar);
-  free(scratch_cluster_arr[i]->means);
-  free(scratch_cluster_arr[i]->R);
-  free(scratch_cluster_arr[i]->Rinv);
+for(int i = 0; i<num_scratch_components; i++) {
+  free(scratch_component_arr[i]->N);
+  free(scratch_component_arr[i]->pi);
+  free(scratch_component_arr[i]->constant);
+  free(scratch_component_arr[i]->avgvar);
+  free(scratch_component_arr[i]->means);
+  free(scratch_component_arr[i]->R);
+  free(scratch_component_arr[i]->Rinv);
   }
 
   return;
@@ -127,67 +127,67 @@ void alloc_events_on_GPU(int num_dimensions, int num_events) {
 }
 
 //hack hack..
-void relink_clusters_on_CPU(pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
-     clusters.pi = weights.data();
-     clusters.means = means.data();
-     clusters.R = covars.data();
+void relink_components_on_CPU(pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
+     components.pi = weights.data();
+     components.means = means.data();
+     components.R = covars.data();
 }
 
 // ================== Cluster data allocation on CPU  ================= :
 
-void alloc_clusters_on_CPU(int original_num_clusters, int num_dimensions, pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
+void alloc_components_on_CPU(int original_num_components, int num_dimensions, pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
 
-  //printf("Alloc clusters on CPU\n");
+  //printf("Alloc components on CPU\n");
   
-  //clusters.pi = (float*) malloc(sizeof(float)*original_num_clusters);
-  //clusters.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_clusters);   
-  //clusters.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
-  clusters.pi = weights.data();
-  clusters.means = means.data();
-  clusters.R = covars.data();
+  //components.pi = (float*) malloc(sizeof(float)*original_num_components);
+  //components.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_components);   
+  //components.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_components);
+  components.pi = weights.data();
+  components.means = means.data();
+  components.R = covars.data();
 
-  clusters.N = (float*) malloc(sizeof(float)*original_num_clusters);      
-  clusters.constant = (float*) malloc(sizeof(float)*original_num_clusters);
-  clusters.avgvar = (float*) malloc(sizeof(float)*original_num_clusters);
-  clusters.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_clusters);
+  components.N = (float*) malloc(sizeof(float)*original_num_components);      
+  components.constant = (float*) malloc(sizeof(float)*original_num_components);
+  components.avgvar = (float*) malloc(sizeof(float)*original_num_components);
+  components.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_components);
  
   return;
 }  
 
 // ================== Cluster data allocation on GPU  ================= :
-void alloc_clusters_on_GPU(int original_num_clusters, int num_dimensions) {
+void alloc_components_on_GPU(int original_num_components, int num_dimensions) {
 
-  //printf("Alloc clusters on GPU\n");
+  //printf("Alloc components on GPU\n");
 
-  // Setup the cluster data structures on device
+  // Setup the component data structures on device
   // First allocate structures on the host, CUDA malloc the arrays
   // Then CUDA malloc structures on the device and copy them over
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.N),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.pi),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.constant),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.avgvar),sizeof(float)*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.means),sizeof(float)*num_dimensions*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.R),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_clusters.Rinv),sizeof(float)*num_dimensions*num_dimensions*original_num_clusters));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.N),sizeof(float)*original_num_components));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.pi),sizeof(float)*original_num_components));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.constant),sizeof(float)*original_num_components));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.avgvar),sizeof(float)*original_num_components));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.means),sizeof(float)*num_dimensions*original_num_components));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.R),sizeof(float)*num_dimensions*num_dimensions*original_num_components));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.Rinv),sizeof(float)*num_dimensions*num_dimensions*original_num_components));
    
   // Allocate a struct on the device 
-  CUDA_SAFE_CALL(cudaMalloc((void**) &d_clusters, sizeof(clusters_t)));
+  CUDA_SAFE_CALL(cudaMalloc((void**) &d_components, sizeof(components_t)));
     
   // Copy Cluster data to device
-  CUDA_SAFE_CALL(cudaMemcpy(d_clusters,&temp_clusters,sizeof(clusters_t),cudaMemcpyHostToDevice));
+  CUDA_SAFE_CALL(cudaMemcpy(d_components,&temp_components,sizeof(components_t),cudaMemcpyHostToDevice));
 
   return;
 }
 
 // ================= Eval data alloc on CPU and GPU =============== 
 
-void alloc_evals_on_CPU(pyublas::numpy_array<float> cluster_mem_np_arr, pyublas::numpy_array<float> loglikelihoods_np_arr){
-  cluster_memberships = cluster_mem_np_arr.data();
+void alloc_evals_on_CPU(pyublas::numpy_array<float> component_mem_np_arr, pyublas::numpy_array<float> loglikelihoods_np_arr){
+  component_memberships = component_mem_np_arr.data();
   loglikelihoods = loglikelihoods_np_arr.data();
 }
 
-void alloc_evals_on_GPU(int num_events, int num_clusters){
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_cluster_memberships),sizeof(float)*num_events*num_clusters));
+void alloc_evals_on_GPU(int num_events, int num_components){
+  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_component_memberships),sizeof(float)*num_events*num_components));
   CUDA_SAFE_CALL(cudaMalloc((void**) &(d_loglikelihoods),sizeof(float)*num_events));
 }
 
@@ -202,38 +202,38 @@ void copy_event_data_CPU_to_GPU(int num_events, int num_dimensions) {
   return;
 }
 
-// ======================== Copy cluster data from CPU to GPU ================
-void copy_cluster_data_CPU_to_GPU(int num_clusters, int num_dimensions) {
+// ======================== Copy component data from CPU to GPU ================
+void copy_component_data_CPU_to_GPU(int num_components, int num_dimensions) {
 
-   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.N, clusters.N, sizeof(float)*num_clusters,cudaMemcpyHostToDevice)); 
-   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.pi, clusters.pi, sizeof(float)*num_clusters,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.constant, clusters.constant, sizeof(float)*num_clusters,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.avgvar, clusters.avgvar, sizeof(float)*num_clusters,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.means, clusters.means, sizeof(float)*num_dimensions*num_clusters,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.R, clusters.R, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_clusters.Rinv, clusters.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(d_clusters,&temp_clusters,sizeof(clusters_t),cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_components.N, components.N, sizeof(float)*num_components,cudaMemcpyHostToDevice)); 
+   CUDA_SAFE_CALL(cudaMemcpy(temp_components.pi, components.pi, sizeof(float)*num_components,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_components.constant, components.constant, sizeof(float)*num_components,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_components.avgvar, components.avgvar, sizeof(float)*num_components,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_components.means, components.means, sizeof(float)*num_dimensions*num_components,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_components.R, components.R, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(temp_components.Rinv, components.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyHostToDevice));
+   CUDA_SAFE_CALL(cudaMemcpy(d_components,&temp_components,sizeof(components_t),cudaMemcpyHostToDevice));
    return;
 }
-// ======================== Copy cluster data from GPU to CPU ================
-void copy_cluster_data_GPU_to_CPU(int num_clusters, int num_dimensions) {
+// ======================== Copy component data from GPU to CPU ================
+void copy_component_data_GPU_to_CPU(int num_components, int num_dimensions) {
 
-  CUDA_SAFE_CALL(cudaMemcpy(&temp_clusters, d_clusters, sizeof(clusters_t),cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(&temp_components, d_components, sizeof(components_t),cudaMemcpyDeviceToHost));
   // copy all of the arrays from the structs
-  CUDA_SAFE_CALL(cudaMemcpy(clusters.N, temp_clusters.N, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(clusters.pi, temp_clusters.pi, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(clusters.constant, temp_clusters.constant, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(clusters.avgvar, temp_clusters.avgvar, sizeof(float)*num_clusters,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(clusters.means, temp_clusters.means, sizeof(float)*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(clusters.R, temp_clusters.R, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(clusters.Rinv, temp_clusters.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_clusters,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(components.N, temp_components.N, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(components.pi, temp_components.pi, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(components.constant, temp_components.constant, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(components.avgvar, temp_components.avgvar, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(components.means, temp_components.means, sizeof(float)*num_dimensions*num_components,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(components.R, temp_components.R, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyDeviceToHost));
+  CUDA_SAFE_CALL(cudaMemcpy(components.Rinv, temp_components.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyDeviceToHost));
   
   return;
 }
 
 // ======================== Copy eval data from GPU to CPU ================
-void copy_evals_data_GPU_to_CPU(int num_events, int num_clusters){
-  CUDA_SAFE_CALL(cudaMemcpy(cluster_memberships, d_cluster_memberships, sizeof(float)*num_events*num_clusters, cudaMemcpyDeviceToHost));
+void copy_evals_data_GPU_to_CPU(int num_events, int num_components){
+  CUDA_SAFE_CALL(cudaMemcpy(component_memberships, d_component_memberships, sizeof(float)*num_events*num_components, cudaMemcpyDeviceToHost));
   CUDA_SAFE_CALL(cudaMemcpy(loglikelihoods, d_loglikelihoods, sizeof(float)*num_events, cudaMemcpyDeviceToHost));
 }
 
@@ -268,62 +268,62 @@ void dealloc_events_on_GPU() {
 
 
 // ==================== Cluster data deallocation on CPU =================  
-void dealloc_clusters_on_CPU() {
+void dealloc_components_on_CPU() {
 
-  //free(clusters.pi);
-  //free(clusters.means);
-  //free(clusters.R);
+  //free(components.pi);
+  //free(components.means);
+  //free(components.R);
 
-  free(clusters.N);
-  free(clusters.constant);
-  free(clusters.avgvar);
-  free(clusters.Rinv);
+  free(components.N);
+  free(components.constant);
+  free(components.avgvar);
+  free(components.Rinv);
   return;
 }
 
 // ==================== Cluster data deallocation on GPU =================  
-void dealloc_clusters_on_GPU() {
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.N));
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.pi));
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.constant));
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.avgvar));
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.means));
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.R));
-  CUDA_SAFE_CALL(cudaFree(temp_clusters.Rinv));
+void dealloc_components_on_GPU() {
+  CUDA_SAFE_CALL(cudaFree(temp_components.N));
+  CUDA_SAFE_CALL(cudaFree(temp_components.pi));
+  CUDA_SAFE_CALL(cudaFree(temp_components.constant));
+  CUDA_SAFE_CALL(cudaFree(temp_components.avgvar));
+  CUDA_SAFE_CALL(cudaFree(temp_components.means));
+  CUDA_SAFE_CALL(cudaFree(temp_components.R));
+  CUDA_SAFE_CALL(cudaFree(temp_components.Rinv));
   
-  CUDA_SAFE_CALL(cudaFree(d_clusters));
+  CUDA_SAFE_CALL(cudaFree(d_components));
 
   return;
 }
 
 // ==================== Eval data deallocation on CPU and GPU =================  
 void dealloc_evals_on_CPU() {
-  //free(cluster_memberships);
+  //free(component_memberships);
   //free(loglikelihoods);
   return;
 }
 
 void dealloc_evals_on_GPU() {
-  CUDA_SAFE_CALL(cudaFree(d_cluster_memberships));
+  CUDA_SAFE_CALL(cudaFree(d_component_memberships));
   CUDA_SAFE_CALL(cudaFree(d_loglikelihoods));
   return;
 }
 
 // Accessor functions for pi, means, covars 
 
-pyublas::numpy_array<float> get_temp_cluster_pi(clusters_t* c){
+pyublas::numpy_array<float> get_temp_component_pi(components_t* c){
   pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(1);
   std::copy( c->pi, c->pi+1, ret.begin());
   return ret;
 }
 
-pyublas::numpy_array<float> get_temp_cluster_means(clusters_t* c, int D){
+pyublas::numpy_array<float> get_temp_component_means(components_t* c, int D){
   pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D);
   std::copy( c->means, c->means+D, ret.begin());
   return ret;
 }
 
-pyublas::numpy_array<float> get_temp_cluster_covars(clusters_t* c, int D){
+pyublas::numpy_array<float> get_temp_component_covars(components_t* c, int D){
   pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*D);
   std::copy( c->R, c->R+D*D, ret.begin());
   return ret;
@@ -332,94 +332,94 @@ pyublas::numpy_array<float> get_temp_cluster_covars(clusters_t* c, int D){
 //------------------------- AHC FUNCTIONS ----------------------------
 
 int compute_distance_rissanen(int c1, int c2, int num_dimensions) {
-  // compute distance function between the 2 clusters
+  // compute distance function between the 2 components
 
-  clusters_t *new_cluster = alloc_temp_cluster_on_CPU(num_dimensions);
+  components_t *new_component = alloc_temp_component_on_CPU(num_dimensions);
 
-  float distance = cluster_distance(&clusters,c1,c2,new_cluster,num_dimensions);
+  float distance = component_distance(&components,c1,c2,new_component,num_dimensions);
   //printf("distance %d-%d: %f\n", c1, c2, distance);
 
-  scratch_cluster_arr[num_scratch_clusters] = new_cluster;
-  num_scratch_clusters++;
+  scratch_component_arr[num_scratch_components] = new_component;
+  num_scratch_components++;
   
-  ret.cluster = boost::python::object(boost::python::ptr(new_cluster));
+  ret.component = boost::python::object(boost::python::ptr(new_component));
   ret.distance = distance;
 
   return 0;
 
 }
 
-void merge_clusters(int min_c1, int min_c2, clusters_t *min_cluster, int num_clusters, int num_dimensions) {
+void merge_components(int min_c1, int min_c2, components_t *min_component, int num_components, int num_dimensions) {
 
-  // Copy new combined cluster into the main group of clusters, compact them
-  copy_cluster(&clusters,min_c1, min_cluster,0,num_dimensions);
+  // Copy new combined component into the main group of components, compact them
+  copy_component(&components,min_c1, min_component,0,num_dimensions);
 
-  for(int i=min_c2; i < num_clusters-1; i++) {
+  for(int i=min_c2; i < num_components-1; i++) {
   
-    copy_cluster(&clusters,i,&clusters,i+1,num_dimensions);
+    copy_component(&components,i,&components,i+1,num_dimensions);
   }
 
-  //return boost::python::object(boost::python::ptr(clusters));
-  //return boost::python::object(clusters);
+  //return boost::python::object(boost::python::ptr(components));
+  //return boost::python::object(components);
   return;
 }
 
 
-float cluster_distance(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions) {
-  // Add the clusters together, this updates pi,means,R,N and stores in temp_cluster
+float component_distance(components_t *components, int c1, int c2, components_t *temp_component, int num_dimensions) {
+  // Add the components together, this updates pi,means,R,N and stores in temp_component
 
-  add_clusters(clusters,c1,c2,temp_cluster,num_dimensions);
-  //printf("%f, %f, %f, %f, %f, %f\n", clusters->N[c1], clusters->constant[c1], clusters->N[c2], clusters->constant[c2], temp_cluster->N[0], temp_cluster->constant[0]);
-  return clusters->N[c1]*clusters->constant[c1] + clusters->N[c2]*clusters->constant[c2] - temp_cluster->N[0]*temp_cluster->constant[0];
+  add_components(components,c1,c2,temp_component,num_dimensions);
+  //printf("%f, %f, %f, %f, %f, %f\n", components->N[c1], components->constant[c1], components->N[c2], components->constant[c2], temp_component->N[0], temp_component->constant[0]);
+  return components->N[c1]*components->constant[c1] + components->N[c2]*components->constant[c2] - temp_component->N[0]*temp_component->constant[0];
   
 }
 
-void add_clusters(clusters_t *clusters, int c1, int c2, clusters_t *temp_cluster, int num_dimensions) {
+void add_components(components_t *components, int c1, int c2, components_t *temp_component, int num_dimensions) {
   float wt1,wt2;
  
-  wt1 = (clusters->N[c1]) / (clusters->N[c1] + clusters->N[c2]);
+  wt1 = (components->N[c1]) / (components->N[c1] + components->N[c2]);
   wt2 = 1.0f - wt1;
     
   // Compute new weighted means
   for(int i=0; i<num_dimensions;i++) {
-    temp_cluster->means[i] = wt1*clusters->means[c1*num_dimensions+i] + wt2*clusters->means[c2*num_dimensions+i];
+    temp_component->means[i] = wt1*components->means[c1*num_dimensions+i] + wt2*components->means[c2*num_dimensions+i];
   }
     
   // Compute new weighted covariance
   for(int i=0; i<num_dimensions; i++) {
     for(int j=i; j<num_dimensions; j++) {
-      // Compute R contribution from cluster1
-      temp_cluster->R[i*num_dimensions+j] = ((temp_cluster->means[i]-clusters->means[c1*num_dimensions+i])
-                                             *(temp_cluster->means[j]-clusters->means[c1*num_dimensions+j])
-                                             +clusters->R[c1*num_dimensions*num_dimensions+i*num_dimensions+j])*wt1;
-      // Add R contribution from cluster2
-      temp_cluster->R[i*num_dimensions+j] += ((temp_cluster->means[i]-clusters->means[c2*num_dimensions+i])
-                                              *(temp_cluster->means[j]-clusters->means[c2*num_dimensions+j])
-                                              +clusters->R[c2*num_dimensions*num_dimensions+i*num_dimensions+j])*wt2;
+      // Compute R contribution from component1
+      temp_component->R[i*num_dimensions+j] = ((temp_component->means[i]-components->means[c1*num_dimensions+i])
+                                             *(temp_component->means[j]-components->means[c1*num_dimensions+j])
+                                             +components->R[c1*num_dimensions*num_dimensions+i*num_dimensions+j])*wt1;
+      // Add R contribution from component2
+      temp_component->R[i*num_dimensions+j] += ((temp_component->means[i]-components->means[c2*num_dimensions+i])
+                                              *(temp_component->means[j]-components->means[c2*num_dimensions+j])
+                                              +components->R[c2*num_dimensions*num_dimensions+i*num_dimensions+j])*wt2;
       // Because its symmetric...
-      temp_cluster->R[j*num_dimensions+i] = temp_cluster->R[i*num_dimensions+j];
+      temp_component->R[j*num_dimensions+i] = temp_component->R[i*num_dimensions+j];
     }
   }
     
   // Compute pi
-  temp_cluster->pi[0] = clusters->pi[c1] + clusters->pi[c2];
+  temp_component->pi[0] = components->pi[c1] + components->pi[c2];
     
   // compute N
-  temp_cluster->N[0] = clusters->N[c1] + clusters->N[c2];
+  temp_component->N[0] = components->N[c1] + components->N[c2];
 
   float log_determinant;
   // Copy R to Rinv matrix
-  memcpy(temp_cluster->Rinv,temp_cluster->R,sizeof(float)*num_dimensions*num_dimensions);
+  memcpy(temp_component->Rinv,temp_component->R,sizeof(float)*num_dimensions*num_dimensions);
   // Invert the matrix
-  invert_cpu(temp_cluster->Rinv,num_dimensions,&log_determinant);
+  invert_cpu(temp_component->Rinv,num_dimensions,&log_determinant);
   // Compute the constant
-  temp_cluster->constant[0] = (-num_dimensions)*0.5*logf(2*PI)-0.5*log_determinant;
+  temp_component->constant[0] = (-num_dimensions)*0.5*logf(2*PI)-0.5*log_determinant;
     
-  // avgvar same for all clusters
-  temp_cluster->avgvar[0] = clusters->avgvar[0];
+  // avgvar same for all components
+  temp_component->avgvar[0] = components->avgvar[0];
 }
 
-void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int num_dimensions) {
+void copy_component(components_t *dest, int c_dest, components_t *src, int c_src, int num_dimensions) {
   dest->N[c_dest] = src->N[c_src];
   dest->pi[c_dest] = src->pi[c_src];
   dest->constant[c_dest] = src->constant[c_src];
@@ -432,19 +432,19 @@ void copy_cluster(clusters_t *dest, int c_dest, clusters_t *src, int c_src, int 
 //---------------- END AHC FUNCTIONS ----------------
 
 
-void writeCluster(FILE* f, clusters_t clusters, int c, int num_dimensions) {
-  fprintf(f,"Probability: %f\n", clusters.pi[c]);
-  fprintf(f,"N: %f\n",clusters.N[c]);
+void writeCluster(FILE* f, components_t components, int c, int num_dimensions) {
+  fprintf(f,"Probability: %f\n", components.pi[c]);
+  fprintf(f,"N: %f\n",components.N[c]);
   fprintf(f,"Means: ");
   for(int i=0; i<num_dimensions; i++){
-    fprintf(f,"%.3f ",clusters.means[c*num_dimensions+i]);
+    fprintf(f,"%.3f ",components.means[c*num_dimensions+i]);
   }
   fprintf(f,"\n");
 
   fprintf(f,"\nR Matrix:\n");
   for(int i=0; i<num_dimensions; i++) {
     for(int j=0; j<num_dimensions; j++) {
-      fprintf(f,"%.3f ", clusters.R[c*num_dimensions*num_dimensions+i*num_dimensions+j]);
+      fprintf(f,"%.3f ", components.R[c*num_dimensions*num_dimensions+i*num_dimensions+j]);
     }
     fprintf(f,"\n");
   }
@@ -460,8 +460,8 @@ void writeCluster(FILE* f, clusters_t clusters, int c, int num_dimensions) {
   */
 }
 
-void printCluster(clusters_t clusters, int c, int num_dimensions) {
-  writeCluster(stdout,clusters,c,num_dimensions);
+void printCluster(components_t components, int c, int num_dimensions) {
+  writeCluster(stdout,components,c,num_dimensions);
 }
 
 
@@ -546,7 +546,7 @@ void invert_cpu(float* data, int actualsize, float* log_determinant)  {
 
 /*
  * Another matrix inversion function
- * This was modified from the 'cluster' application by Charles A. Bouman
+ * This was modified from the 'component' application by Charles A. Bouman
  */
 int invert_matrix(float* a, int n, float* determinant) {
   int  i,j,f,g;

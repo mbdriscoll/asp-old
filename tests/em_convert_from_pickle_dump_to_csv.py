@@ -10,7 +10,7 @@ param_type_map = {
         'num_threads_mstep': 'cardinal',
         'num_event_blocks': 'cardinal',
         'max_num_dimensions': 'cardinal',
-        'max_num_clusters': 'cardinal',
+        'max_num_components': 'cardinal',
         'diag_only': 'binary',
         'max_iters': 'cardinal',
         'min_iters': 'cardinal',

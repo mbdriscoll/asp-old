@@ -32,7 +32,7 @@ __device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data,
     }
 }
 
-__device__ void compute_constants${'_'+'_'.join(param_val_list)}(clusters_t* clusters, int num_clusters, int num_dimensions) {
+__device__ void compute_constants${'_'+'_'.join(param_val_list)}(components_t* components, int num_components, int num_dimensions) {
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
     int num_elements = num_dimensions*num_dimensions;
@@ -43,11 +43,11 @@ __device__ void compute_constants${'_'+'_'.join(param_val_list)}(clusters_t* clu
     
     __shared__ float matrix[${max_num_dimensions}*${max_num_dimensions}];
     
-    // Invert the matrix for every cluster
+    // Invert the matrix for every component
     int c = blockIdx.x;
     // Copy the R matrix into shared memory for doing the matrix inversion
     for(int i=tid; i<num_elements; i+= num_threads ) {
-        matrix[i] = clusters->R[c*num_dimensions*num_dimensions+i];
+        matrix[i] = components->R[c*num_dimensions*num_dimensions+i];
     }
     
     __syncthreads(); 
@@ -58,9 +58,9 @@ __device__ void compute_constants${'_'+'_'.join(param_val_list)}(clusters_t* clu
     
     log_determinant = determinant_arg;
     
-    // Copy the matrx from shared memory back into the cluster memory
+    // Copy the matrx from shared memory back into the component memory
     for(int i=tid; i<num_elements; i+= num_threads) {
-        clusters->Rinv[c*num_dimensions*num_dimensions+i] = matrix[i];
+        components->Rinv[c*num_dimensions*num_dimensions+i] = matrix[i];
     }
     
     __syncthreads();
@@ -69,18 +69,18 @@ __device__ void compute_constants${'_'+'_'.join(param_val_list)}(clusters_t* clu
     // Equivilent to: log(1/((2*PI)^(M/2)*det(R)^(1/2)))
     // This constant is used in all E-step likelihood calculations
     if(tid == 0) {
-        clusters->constant[c] = -num_dimensions*0.5*logf(2*PI) - 0.5*log_determinant;
+        components->constant[c] = -num_dimensions*0.5*logf(2*PI) - 0.5*log_determinant;
     }
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 //! @param fcs_data         FCS data: [num_events]
-//! @param clusters         Clusters: [num_clusters]
+//! @param components         Clusters: [num_components]
 //! @param num_dimensions   number of dimensions in an FCS event
 //! @param num_events       number of FCS events
 ////////////////////////////////////////////////////////////////////////////////
 __global__ void
-seed_clusters${'_'+'_'.join(param_val_list)}( float* fcs_data, clusters_t* clusters, int num_dimensions, int num_clusters, int num_events) 
+seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* components, int num_dimensions, int num_components, int num_events) 
 {
     // access thread id
     int tid = threadIdx.x;
@@ -109,16 +109,16 @@ seed_clusters${'_'+'_'.join(param_val_list)}( float* fcs_data, clusters_t* clust
     __syncthreads();
 
     float seed;
-    if(num_clusters > 1) {
-        seed = (num_events-1.0f)/(num_clusters-1.0f);
+    if(num_components > 1) {
+        seed = (num_events-1.0f)/(num_components-1.0f);
     } else {
         seed = 0.0f;
     }
     
-    // Seed the pi, means, and covariances for every cluster
-    for(int c=0; c < num_clusters; c++) {
+    // Seed the pi, means, and covariances for every component
+    for(int c=0; c < num_components; c++) {
         if(tid < num_dimensions) {
-            clusters->means[c*num_dimensions+tid] = fcs_data[((int)(c*seed))*num_dimensions+tid];
+            components->means[c*num_dimensions+tid] = fcs_data[((int)(c*seed))*num_dimensions+tid];
         }
           
         for(int i=tid; i < num_elements; i+= num_threads) {
@@ -127,15 +127,15 @@ seed_clusters${'_'+'_'.join(param_val_list)}( float* fcs_data, clusters_t* clust
             col = (i) % num_dimensions;
 
             if(row == col) {
-                clusters->R[c*num_dimensions*num_dimensions+i] = 1.0f;
+                components->R[c*num_dimensions*num_dimensions+i] = 1.0f;
             } else {
-                clusters->R[c*num_dimensions*num_dimensions+i] = 0.0f;
+                components->R[c*num_dimensions*num_dimensions+i] = 0.0f;
             }
         }
         if(tid == 0) {
-            clusters->pi[c] = 1.0f/((float)num_clusters);
-            clusters->N[c] = ((float) num_events) / ((float)num_clusters);
-            clusters->avgvar[c] = avgvar / COVARIANCE_DYNAMIC_RANGE;
+            components->pi[c] = 1.0f/((float)num_components);
+            components->N[c] = ((float) num_events) / ((float)num_components);
+            components->avgvar[c] = avgvar / COVARIANCE_DYNAMIC_RANGE;
         }
     }
 }
@@ -157,12 +157,12 @@ __device__ void compute_indices${'_'+'_'.join(param_val_list)}(int num_events, i
 }
 
 __global__ void
-estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float *cluster_memberships, int num_dimensions, int num_events, float* likelihood, float* loglikelihoods) {
+estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float *component_memberships, int num_dimensions, int num_events, float* likelihood, float* loglikelihoods) {
     
-    // Cached cluster parameters
+    // Cached component parameters
     __shared__ float means[${max_num_dimensions}];
     __shared__ float Rinv[${max_num_dimensions}*${max_num_dimensions}];
-    float cluster_pi;
+    float component_pi;
     float constant;
     const unsigned int tid = threadIdx.x;
  
@@ -175,27 +175,27 @@ estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, flo
     
     float like;
 
-    // This loop computes the expectation of every event into every cluster
+    // This loop computes the expectation of every event into every component
     //
     // P(k|n) = L(x_n|mu_k,R_k)*P(k) / P(x_n)
     //
-    // Compute log-likelihood for every cluster for each event
+    // Compute log-likelihood for every component for each event
     // L = constant*exp(-0.5*(x-mu)*Rinv*(x-mu))
     // log_L = log_constant - 0.5*(x-u)*Rinv*(x-mu)
-    // the constant stored in clusters[c].constant is already the log of the constant
+    // the constant stored in components[c].constant is already the log of the constant
     
-    // copy the means for this cluster into shared memory
+    // copy the means for this component into shared memory
     if(tid < num_dimensions) {
-        means[tid] = clusters->means[c*num_dimensions+tid];
+        means[tid] = components->means[c*num_dimensions+tid];
     }
 
     // copy the covariance inverse into shared memory
     for(int i=tid; i < num_dimensions*num_dimensions; i+= ${num_threads_estep}) {
-        Rinv[i] = clusters->Rinv[c*num_dimensions*num_dimensions+i]; 
+        Rinv[i] = components->Rinv[c*num_dimensions*num_dimensions+i]; 
     }
     
-    cluster_pi = clusters->pi[c];
-    constant = clusters->constant[c];
+    component_pi = components->pi[c];
+    constant = components->constant[c];
 
     // Sync to wait for all params to be loaded to shared memory
     __syncthreads();
@@ -216,13 +216,13 @@ estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, flo
             }
         #endif
         loglikelihoods[event] = like;
-        cluster_memberships[c*num_events+event] = -0.5f * like + constant + logf(cluster_pi); // numerator of the probability computation
+        component_memberships[c*num_events+event] = -0.5f * like + constant + logf(component_pi); // numerator of the probability computation
     }
 }
 
     
 __global__ void
-estep2${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* likelihood) {
+estep2${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events, float* likelihood) {
     float temp;
     float thread_likelihood = 0.0f;
     __shared__ float total_likelihoods[${num_threads_estep}];
@@ -248,30 +248,30 @@ estep2${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, flo
     
     total_likelihoods[tid] = 0.0f;
 
-    // P(x_n) = sum of likelihoods weighted by P(k) (their probability, cluster[c].pi)
+    // P(x_n) = sum of likelihoods weighted by P(k) (their probability, component[c].pi)
     // However we use logs to prevent under/overflow
     //  log-sum-exp formula:
     //  log(sum(exp(x_i)) = max(z) + log(sum(exp(z_i-max(z))))
     for(int pixel=start_index; pixel<end_index; pixel += ${num_threads_estep}) {
         // find the maximum likelihood for this event
-        max_likelihood = cluster_memberships[pixel];
-        for(int c=1; c<num_clusters; c++) {
-            max_likelihood = fmaxf(max_likelihood,cluster_memberships[c*num_events+pixel]);
+        max_likelihood = component_memberships[pixel];
+        for(int c=1; c<num_components; c++) {
+            max_likelihood = fmaxf(max_likelihood,component_memberships[c*num_events+pixel]);
         }
 
         // Compute P(x_n), the denominator of the probability (sum of weighted likelihoods)
         denominator_sum = 0.0f;
-        for(int c=0; c<num_clusters; c++) {
-            temp = expf(cluster_memberships[c*num_events+pixel]-max_likelihood);
+        for(int c=0; c<num_components; c++) {
+            temp = expf(component_memberships[c*num_events+pixel]-max_likelihood);
             denominator_sum += temp;
         }
         denominator_sum = max_likelihood + logf(denominator_sum);
         thread_likelihood += denominator_sum;
         
         // Divide by denominator, also effectively normalize probabilities
-        for(int c=0; c<num_clusters; c++) {
-            cluster_memberships[c*num_events+pixel] = expf(cluster_memberships[c*num_events+pixel] - denominator_sum);
-            //printf("Probability that pixel #%d is in cluster #%d: %f\n",pixel,c,clusters->memberships[c*num_events+pixel]);
+        for(int c=0; c<num_components; c++) {
+            component_memberships[c*num_events+pixel] = expf(component_memberships[c*num_events+pixel] - denominator_sum);
+            //printf("Probability that pixel #%d is in component #%d: %f\n",pixel,c,components->memberships[c*num_events+pixel]);
         }
     }
     
@@ -285,18 +285,18 @@ estep2${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, flo
 }
 
 __global__ void
-mstep_means${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
-    // One block per cluster, per dimension:  (M x D) grid of blocks
+mstep_means${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
+    // One block per component, per dimension:  (M x D) grid of blocks
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
-    int c = blockIdx.x; // cluster number
+    int c = blockIdx.x; // component number
     int d = blockIdx.y; // dimension number
 
     __shared__ float temp_sum[${num_threads_mstep}];
     float sum = 0.0f;
     
     for(int event=tid; event < num_events; event+= num_threads) {
-        sum += fcs_data[d*num_events+event]*cluster_memberships[c*num_events+event];
+        sum += fcs_data[d*num_events+event]*component_memberships[c*num_events+event];
     }
     temp_sum[tid] = sum;
     
@@ -306,24 +306,24 @@ mstep_means${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters
         for(int i=1; i < num_threads; i++) {
             temp_sum[0] += temp_sum[i];
         }
-        clusters->means[c*num_dimensions+d] = temp_sum[0] / clusters->N[c];
+        components->means[c*num_dimensions+d] = temp_sum[0] / components->N[c];
     }
     
 }
 
 __global__ void
-mstep_means_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
-    // One block per cluster, per dimension:  (M x D) grid of blocks
+mstep_means_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
+    // One block per component, per dimension:  (M x D) grid of blocks
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
-    int c = blockIdx.y; // cluster number
+    int c = blockIdx.y; // component number
     int d = blockIdx.x; // dimension number
 
     __shared__ float temp_sum[${num_threads_mstep}];
     float sum = 0.0f;
     
     for(int event=tid; event < num_events; event+= num_threads) {
-        sum += fcs_data[d*num_events+event]*cluster_memberships[c*num_events+event];
+        sum += fcs_data[d*num_events+event]*component_memberships[c*num_events+event];
     }
     temp_sum[tid] = sum;
     
@@ -333,13 +333,13 @@ mstep_means_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t
         for(int i=1; i < num_threads; i++) {
             temp_sum[0] += temp_sum[i];
         }
-        clusters->means[c*num_dimensions+d] = temp_sum[0] / clusters->N[c];
+        components->means[c*num_dimensions+d] = temp_sum[0] / components->N[c];
     }
     
 }
 
 __global__ void
-mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
+mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
     
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
@@ -354,7 +354,7 @@ mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, fl
     float sum = 0.0f;
     // Break all the events accross the threads, add up probabilities
     for(int event=tid; event < num_events; event += num_threads) {
-        sum += cluster_memberships[c*num_events+event];
+        sum += component_memberships[c*num_events+event];
     }
     temp_sums[tid] = sum;
  
@@ -363,14 +363,14 @@ mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, fl
     // Let the first thread add up all the intermediate sums
     // Could do a parallel reduction...doubt it's really worth it for so few elements though
     if(tid == 0) {
-        clusters->N[c] = 0.0f;
+        components->N[c] = 0.0f;
         for(int j=0; j<num_threads; j++) {
-            clusters->N[c] += temp_sums[j];
+            components->N[c] += temp_sums[j];
         }
-        //printf("clusters[%d].N = %f\n",c,clusters[c].N);
+        //printf("components[%d].N = %f\n",c,components[c].N);
         
         // Set PI to the # of expected items, and then normalize it later
-        clusters->pi[c] = clusters->N[c];
+        components->pi[c] = components->N[c];
     }
 }
    
@@ -378,7 +378,7 @@ mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, fl
 %if covar_version_name.upper() in ['1','V1','_V1']:
 
 __global__ void
-mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
     int tid = threadIdx.x; // easier variable name for our thread ID
 
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -387,15 +387,15 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
 
     __syncthreads();
     
-    c = blockIdx.x; // Determines what cluster this block is handling    
+    c = blockIdx.x; // Determines what component this block is handling    
 
     int matrix_index = row * num_dimensions + col;
 
     // Store the means in shared memory to speed up the covariance computations
     __shared__ float means[${max_num_dimensions}];
-    // copy the means for this cluster into shared memory
+    // copy the means for this component into shared memory
     if(tid < num_dimensions) {
-        means[tid] = clusters->means[c*num_dimensions+tid];
+        means[tid] = components->means[c*num_dimensions+tid];
     }
     __syncthreads();
 
@@ -407,8 +407,8 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
     float cov_sum = 0.0f;
 
     for(int event=tid; event < num_events; event+=${num_threads_mstep}) {
-      cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*cluster_memberships[c*num_events+event];
-      //cov_sum += means[row]; //*(fcs_data[col*num_events+event]-means[col])*clusters->memberships[c*num_events+event];
+      cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*component_memberships[c*num_events+event];
+      //cov_sum += means[row]; //*(fcs_data[col*num_events+event]-means[col])*components->memberships[c*num_events+event];
     }
 
     temp_sums[tid] = cov_sum;
@@ -420,32 +420,32 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
       for(int i=0; i < ${num_threads_mstep}; i++) {
         cov_sum += temp_sums[i];
       }
-      if(clusters->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
-        cov_sum /= clusters->N[c];
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+      if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+        cov_sum /= components->N[c];
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
         //Set the symmetric value
         matrix_index = col*num_dimensions+row;
         //        matrix_index = col*num_dimensions+row;
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
       } else {
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
         // Set the symmetric value
         matrix_index = col*num_dimensions+row;
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
       }
       // Regularize matrix - adds some variance to the diagonal elements
       // Helps keep covariance matrix non-singular (so it can be inverted)
       // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
       if(row == col) {
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] += clusters->avgvar[c];
+        components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
       }
     }
 }
 
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
 {
-  dim3 gridDim2(num_clusters,num_dimensions*(num_dimensions+1)/2);
-  mstep_covariance${'_'+'_'.join(param_val_list)}<<<gridDim2, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
+  dim3 gridDim2(num_components,num_dimensions*(num_dimensions+1)/2);
+  mstep_covariance${'_'+'_'.join(param_val_list)}<<<gridDim2, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events);
 }
 
 %elif covar_version_name.upper() in ['2','2A','V2','V2A','_V2','_V2A']:
@@ -455,7 +455,7 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
  * Must be launched with a M blocks and D x D/2 threads: 
  */
 __global__ void
-mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
     int tid = threadIdx.x; // easier variable name for our thread ID
 
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -464,16 +464,16 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
 
     __syncthreads();
     
-    c = blockIdx.x; // Determines what cluster this block is handling    
+    c = blockIdx.x; // Determines what component this block is handling    
 
     int matrix_index = row * num_dimensions + col;
 
     // Store the means in shared memory to speed up the covariance computations
     __shared__ float means[${max_num_dimensions}];
 
-    // copy the means for this cluster into shared memory
+    // copy the means for this component into shared memory
     if(tid < num_dimensions) {
-        means[tid] = clusters->means[c*num_dimensions+tid];
+        means[tid] = components->means[c*num_dimensions+tid];
     }
     
     // Sync to wait for all params to be loaded to shared memory
@@ -484,38 +484,38 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
 
 
     for(int event=0; event < num_events; event++) {
-      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*cluster_memberships[c*num_events+event];
+      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
     }
 
     __syncthreads();
 
     
-    if(clusters->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
-      cov_sum /= clusters->N[c];
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+    if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+      cov_sum /= components->N[c];
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
       // Set the symmetric value
       matrix_index = col*num_dimensions+row;
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
     } else {
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
       // Set the symmetric value
       matrix_index = col*num_dimensions+row;
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
     }
     
     // Regularize matrix - adds some variance to the diagonal elements
     // Helps keep covariance matrix non-singular (so it can be inverted)
     // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
     if(row == col) {
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] += clusters->avgvar[c];
+      components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
     }
     
 }
 
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
 {
   int num_threads = num_dimensions*(num_dimensions+1)/2;
-  mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_clusters, num_threads>>>(d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
+  mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_components, num_threads>>>(d_fcs_data_by_event,d_components,d_component_memberships,num_dimensions,num_components,num_events);
 }
 
 %elif covar_version_name.upper() in ['2B','V2B','_V2B']:
@@ -526,7 +526,7 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
  * B is the number of event blocks (N/events_per_block)
  */
 __global__ void
-mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events, int event_block_size, int num_b, float *temp_buffer) {
+mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events, int event_block_size, int num_b, float *temp_buffer) {
 
   int tid = threadIdx.x; // easier variable name for our thread ID
     
@@ -539,7 +539,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
      
     //__syncthreads();
     
-    c = blockIdx.x; // Determines what cluster this block is handling    
+    c = blockIdx.x; // Determines what component this block is handling    
 
     int matrix_index = row * num_dimensions + col;
 
@@ -547,9 +547,9 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
     __shared__ float means[${max_num_dimensions}];
     __shared__ float myR[${max_num_dimensions}*${max_num_dimensions}];
     
-    // copy the means for this cluster into shared memory
+    // copy the means for this component into shared memory
     if(tid < num_dimensions) {
-        means[tid] = clusters->means[c*num_dimensions+tid];
+        means[tid] = components->means[c*num_dimensions+tid];
     }
 
     /* for(int z = tid; z<${max_num_dimensions}*${max_num_dimensions}; z+=blockDim.x) { */
@@ -562,7 +562,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
     float cov_sum = 0.0f; //my local sum for the matrix element, I (thread) sum up over all N events into this var
 
     for(int event=e_start; event < e_end; event++) {
-      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*cluster_memberships[c*num_events+event];
+      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
     }
 
     myR[matrix_index] = cov_sum;
@@ -572,36 +572,36 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
     __syncthreads();
 
     //if(blockIdx.y == 0) {
-      if(clusters->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+      if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
-        cs /= clusters->N[c];
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
+        cs /= components->N[c];
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
         // Set the symmetric value
         matrix_index = col*num_dimensions+row;
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
       } else {
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
         // Set the symmetric value
         matrix_index = col*num_dimensions+row;
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
       }
     
       // Regularize matrix - adds some variance to the diagonal elements
       // Helps keep covariance matrix non-singular (so it can be inverted)
       // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
       if(row == col) {
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] += clusters->avgvar[c];
+        components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
       }
       //}
 }
  
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
 {
   int num_event_blocks = ${num_event_blocks};
   int event_block_size = num_events%${num_event_blocks} == 0 ? num_events/${num_event_blocks}:num_events/(${num_event_blocks}-1);
-  dim3 gridDim2(num_clusters,num_event_blocks);
+  dim3 gridDim2(num_components,num_event_blocks);
   int num_threads = num_dimensions*(num_dimensions+1)/2;
-  mstep_covariance${'_'+'_'.join(param_val_list)}<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events, event_block_size, num_event_blocks, temp_buffer_2b);
+  mstep_covariance${'_'+'_'.join(param_val_list)}<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_components,d_component_memberships,num_dimensions,num_components,num_events, event_block_size, num_event_blocks, temp_buffer_2b);
 }
 
 %else:
@@ -611,7 +611,7 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
  * Must be launched with a D*D/2 blocks: 
  */
 __global__ void
-mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
 
 
   int tid = threadIdx.x; // easier variable name for our thread ID
@@ -625,29 +625,29 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
   int matrix_index;
     
   // Store the means in shared memory to speed up the covariance computations
-  __shared__ float means[${max_num_clusters}*${max_num_dimensions}];
+  __shared__ float means[${max_num_components}*${max_num_dimensions}];
   
-  // copy the means for all clusters into shared memory
+  // copy the means for all components into shared memory
 
-  for(int i = tid; i<num_clusters*num_dimensions; i+=${num_threads_mstep}) {
-    means[i] = clusters->means[i];
+  for(int i = tid; i<num_components*num_dimensions; i+=${num_threads_mstep}) {
+    means[i] = components->means[i];
   }
   
   // Sync to wait for all params to be loaded to shared memory
   __syncthreads();
 
   __shared__ float temp_sums[${num_threads_mstep}];
-  __shared__ float cluster_sum[${max_num_clusters}]; //local storage for cluster results
+  __shared__ float component_sum[${max_num_components}]; //local storage for component results
   
-  for(int c = 0; c<num_clusters; c++) {
+  for(int c = 0; c<num_components; c++) {
     float cov_sum = 0.0f;
     //float temp = 0.0f;
     
     for(int event=tid; event < num_events; event+=${num_threads_mstep}) {
 #ifdef SH_MEM_EVENTS
-      cov_sum += (events[row*num_events+event]-means[c*num_dimensions+row])*(events[col*num_events+event]-means[c*num_dimensions+col])*cluster_memberships[c*num_events+event];
+      cov_sum += (events[row*num_events+event]-means[c*num_dimensions+row])*(events[col*num_events+event]-means[c*num_dimensions+col])*component_memberships[c*num_events+event];
 #else
-      cov_sum += (fcs_data[row*num_events+event]-means[c*num_dimensions+row])*(fcs_data[col*num_events+event]-means[c*num_dimensions+col])*cluster_memberships[c*num_events+event];
+      cov_sum += (fcs_data[row*num_events+event]-means[c*num_dimensions+row])*(fcs_data[col*num_events+event]-means[c*num_dimensions+col])*component_memberships[c*num_events+event];
 #endif
       
     }
@@ -657,9 +657,9 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
     __syncthreads();
       
     if(tid == 0) {
-      cluster_sum[c] = 0.0f; 
+      component_sum[c] = 0.0f; 
       for(int i=0; i < ${num_threads_mstep}; i++) {
-        cluster_sum[c] += temp_sums[i];
+        component_sum[c] += temp_sums[i];
       }
     }
 
@@ -667,21 +667,21 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
   __syncthreads();
 
     
-  for(int c = tid; c<num_clusters; c+=${num_threads_mstep}) {
+  for(int c = tid; c<num_components; c+=${num_threads_mstep}) {
     matrix_index =  row * num_dimensions + col;
-    if(clusters->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
-      cluster_sum[c] /= clusters->N[c];
+    if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+      component_sum[c] /= components->N[c];
         
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cluster_sum[c];
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = component_sum[c];
         
       //Set the symmetric value
       matrix_index = col*num_dimensions+row;
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cluster_sum[c];
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = component_sum[c];
     } else {
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
       // Set the symmetric value
       matrix_index = col*num_dimensions+row;
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
     }
       
       
@@ -689,15 +689,15 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clu
     // Helps keep covariance matrix non-singular (so it can be inverted)
     // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
     if(row == col) {
-      clusters->R[c*num_dimensions*num_dimensions+matrix_index] += clusters->avgvar[c];
+      components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
     }
   } 
 }
 
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
 {
   int num_blocks = num_dimensions*(num_dimensions+1)/2;
-  mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_blocks, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
+  mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_blocks, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events);
 }
 
 %endif
@@ -705,10 +705,10 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
 /*
  * Computes the covariance matrices of the data (R matrix)
  * Must be launched with a M x D*D grid of blocks: 
- *  i.e. dim3 gridDim(num_clusters,num_dimensions*num_dimensions)
+ *  i.e. dim3 gridDim(num_components,num_dimensions*num_dimensions)
  */
 __global__ void
-mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, clusters_t* clusters, float* cluster_memberships, int num_dimensions, int num_clusters, int num_events) {
+mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
   int tid = threadIdx.x; // easier variable name for our thread ID
 
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -717,24 +717,24 @@ mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, clust
 
     __syncthreads();
     
-    c = blockIdx.y; // Determines what cluster this block is handling    
+    c = blockIdx.y; // Determines what component this block is handling    
 
     int matrix_index = row * num_dimensions + col;
 
     #if ${diag_only}
     if(row != col) {
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
         matrix_index = col*num_dimensions+row;
-        clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
         return;
     }
     #endif 
 
     // Store the means in shared memory to speed up the covariance computations
     __shared__ float means[${max_num_dimensions}];
-    // copy the means for this cluster into shared memory
+    // copy the means for this component into shared memory
     if(tid < num_dimensions) {
-        means[tid] = clusters->means[c*num_dimensions+tid];
+        means[tid] = components->means[c*num_dimensions+tid];
     }
 
     // Sync to wait for all params to be loaded to shared memory
@@ -745,7 +745,7 @@ mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, clust
     float cov_sum = 0.0f;
 
     for(int event=tid; event < num_events; event+=${num_threads_mstep}) {
-        cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*cluster_memberships[c*num_events+event]; 
+        cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*component_memberships[c*num_events+event]; 
     }
     temp_sums[tid] = cov_sum;
 
@@ -756,74 +756,74 @@ mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, clust
         for(int i=0; i < ${num_threads_mstep}; i++) {
             cov_sum += temp_sums[i];
         }
-        if(clusters->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
-            cov_sum /= clusters->N[c];
-            clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+        if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+            cov_sum /= components->N[c];
+            components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
             // Set the symmetric value
             matrix_index = col*num_dimensions+row;
-            clusters->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+            components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
         } else {
-            clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+            components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
             // Set the symmetric value
             matrix_index = col*num_dimensions+row;
-            clusters->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
+            components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
         }
 
         // Regularize matrix - adds some variance to the diagonal elements
         // Helps keep covariance matrix non-singular (so it can be inverted)
         // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
         if(row == col) {
-            clusters->R[c*num_dimensions*num_dimensions+matrix_index] += clusters->avgvar[c];
+            components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
         }
     }
 }
 
 
-void seed_clusters_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_event, clusters_t* d_clusters, int num_dimensions, int original_num_clusters, int num_events)
+void seed_components_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_event, components_t* d_components, int num_dimensions, int original_num_components, int num_events)
 {
-  seed_clusters${'_'+'_'.join(param_val_list)}<<< 1, ${num_threads_mstep} >>>( d_fcs_data_by_event, d_clusters, num_dimensions, original_num_clusters, num_events);
+  seed_components${'_'+'_'.join(param_val_list)}<<< 1, ${num_threads_mstep} >>>( d_fcs_data_by_event, d_components, num_dimensions, original_num_components, num_events);
 }
 
-void estep1_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_events, float* d_likelihoods, int num_clusters, float* d_loglikelihoods)
+void estep1_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_events, float* d_likelihoods, int num_components, float* d_loglikelihoods)
 {
-  estep1${'_'+'_'.join(param_val_list)}<<<dim3(${num_blocks_estep},num_clusters), ${num_threads_estep}>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_events,d_likelihoods, d_loglikelihoods);
+  estep1${'_'+'_'.join(param_val_list)}<<<dim3(${num_blocks_estep},num_components), ${num_threads_estep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_events,d_likelihoods, d_loglikelihoods);
 }
 
-void estep2_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events, float* d_likelihoods)
+void estep2_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* d_likelihoods)
 {
-  estep2${'_'+'_'.join(param_val_list)}<<<${num_blocks_estep}, ${num_threads_estep}>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events,d_likelihoods);
+  estep2${'_'+'_'.join(param_val_list)}<<<${num_blocks_estep}, ${num_threads_estep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events,d_likelihoods);
 }
 
-void mstep_N_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_event, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events)
+void mstep_N_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events)
 {
-  mstep_N${'_'+'_'.join(param_val_list)}<<<num_clusters, ${num_threads_mstep}>>>(d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
+  mstep_N${'_'+'_'.join(param_val_list)}<<<num_components, ${num_threads_mstep}>>>(d_fcs_data_by_event,d_components,d_component_memberships,num_dimensions,num_components,num_events);
 }
 
-void mstep_means_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, clusters_t* d_clusters, float* d_cluster_memberships, int num_dimensions, int num_clusters, int num_events)
+void mstep_means_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events)
 {
-  dim3 gridDim1(num_clusters,num_dimensions);
-  mstep_means${'_'+'_'.join(param_val_list)}<<<gridDim1, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events);
+  dim3 gridDim1(num_components,num_dimensions);
+  mstep_means${'_'+'_'.join(param_val_list)}<<<gridDim1, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events);
 }
 
 /*
- * Computes the constant for each cluster and normalizes pi for every cluster
+ * Computes the constant for each component and normalizes pi for every component
  * In the process it inverts R and finds the determinant
  * 
- * Needs to be launched with the number of blocks = number of clusters
+ * Needs to be launched with the number of blocks = number of components
  */
 __global__ void
-constants_kernel${'_'+'_'.join(param_val_list)}(clusters_t* clusters, int num_clusters, int num_dimensions) {
-    compute_constants${'_'+'_'.join(param_val_list)}(clusters,num_clusters,num_dimensions);
+constants_kernel${'_'+'_'.join(param_val_list)}(components_t* components, int num_components, int num_dimensions) {
+    compute_constants${'_'+'_'.join(param_val_list)}(components,num_components,num_dimensions);
     
     __syncthreads();
     
     if(blockIdx.x == 0) {
-        normalize_pi(clusters,num_clusters);
+        normalize_pi(components,num_components);
     }
 }
 
-void constants_kernel_launch${'_'+'_'.join(param_val_list)}(clusters_t* d_clusters, int original_num_clusters, int num_dimensions)
+void constants_kernel_launch${'_'+'_'.join(param_val_list)}(components_t* d_components, int original_num_components, int num_dimensions)
 {
-  constants_kernel${'_'+'_'.join(param_val_list)}<<<original_num_clusters, 64>>>(d_clusters,original_num_clusters,num_dimensions);
+  constants_kernel${'_'+'_'.join(param_val_list)}<<<original_num_components, 64>>>(d_components,original_num_components,num_dimensions);
 }
 

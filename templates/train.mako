@@ -1,36 +1,36 @@
 
 float train${'_'+'_'.join(param_val_list)} (
-                             int num_clusters, 
+                             int num_components, 
                              int num_dimensions, 
                              int num_events, 
                              pyublas::numpy_array<float> input_data ) 
 {
   
-  //allocate MxM pointers for scratch clusters used during merging
+  //allocate MxM pointers for scratch components used during merging
   //TODO: take this out as a separate callable function?
-  scratch_cluster_arr = (clusters_t**)malloc(sizeof(clusters_t*)*num_clusters*num_clusters);
+  scratch_component_arr = (components_t**)malloc(sizeof(components_t*)*num_components*num_components);
   
   // ================= Temp buffer for codevar 2b ================ 
   float *temp_buffer_2b = NULL;
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
-    //scratch space to clear out clusters->R
-    float *zeroR_2b = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*num_clusters);
-    for(int i = 0; i<num_dimensions*num_dimensions*num_clusters; i++) {
+    //scratch space to clear out components->R
+    float *zeroR_2b = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*num_components);
+    for(int i = 0; i<num_dimensions*num_dimensions*num_components; i++) {
         zeroR_2b[i] = 0.0f;
     }
-    CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_buffer_2b),sizeof(float)*num_dimensions*num_dimensions*num_clusters));
-    CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_clusters, cudaMemcpyHostToDevice) );
+    CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_buffer_2b),sizeof(float)*num_dimensions*num_dimensions*num_components));
+    CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
 %endif
   //=============================================================== 
     
-  // seed_clusters sets initial pi values, 
-  // finds the means / covariances and copies it to all the clusters
-  seed_clusters_launch${'_'+'_'.join(param_val_list)}( d_fcs_data_by_event, d_clusters, num_dimensions, num_clusters, num_events);
+  // seed_components sets initial pi values, 
+  // finds the means / covariances and copies it to all the components
+  seed_components_launch${'_'+'_'.join(param_val_list)}( d_fcs_data_by_event, d_components, num_dimensions, num_components, num_events);
   cudaThreadSynchronize();
   CUT_CHECK_ERROR("Seed Kernel execution failed: ");
    
   // Computes the R matrix inverses, and the gaussian constant
-  constants_kernel_launch${'_'+'_'.join(param_val_list)}(d_clusters,num_clusters,num_dimensions);
+  constants_kernel_launch${'_'+'_'.join(param_val_list)}(d_components,num_components,num_dimensions);
   cudaThreadSynchronize();
   CUT_CHECK_ERROR("Constants Kernel execution failed: ");
     
@@ -47,8 +47,8 @@ float train${'_'+'_'.join(param_val_list)} (
         
   //================================== EM INITIALIZE =======================
 
-  estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters,d_loglikelihoods);
-  estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
+  estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_events,d_likelihoods,num_components,d_loglikelihoods);
+  estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_components,num_events,d_likelihoods);
   cudaThreadSynchronize();
   CUT_CHECK_ERROR("E-step Kernel execution failed");
 
@@ -63,7 +63,7 @@ float train${'_'+'_'.join(param_val_list)} (
   float change = epsilon*2;
 
   //================================= EM BEGIN ==================================
-  //printf("Performing EM algorithm on %d clusters.\n",num_clusters);
+  //printf("Performing EM algorithm on %d components.\n",num_components);
   iters = 0;
 
   // This is the iterative loop for the EM algorithm.
@@ -73,33 +73,33 @@ float train${'_'+'_'.join(param_val_list)} (
     old_likelihood = likelihood;
             
     // This kernel computes a new N, pi isn't updated until compute_constants though
-    mstep_N_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_event,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events);
+    mstep_N_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_event,d_components, d_component_memberships, num_dimensions,num_components,num_events);
     cudaThreadSynchronize();
 
     // This kernel computes new means
-    mstep_means_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters, d_cluster_memberships, num_dimensions,num_clusters,num_events);
+    mstep_means_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_components,num_events);
     cudaThreadSynchronize();
             
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
-      CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_clusters, cudaMemcpyHostToDevice) );
+      CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
 %endif
 
-    // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per cluster
-    mstep_covar_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_fcs_data_by_event,d_clusters,d_cluster_memberships,num_dimensions,num_clusters,num_events,temp_buffer_2b);
+    // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per component
+    mstep_covar_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_fcs_data_by_event,d_components,d_component_memberships,num_dimensions,num_components,num_events,temp_buffer_2b);
     cudaThreadSynchronize();
                  
     CUT_CHECK_ERROR("M-step Kernel execution failed: ");
 
 
-    // Inverts the R matrices, computes the constant, normalizes cluster probabilities
-    constants_kernel_launch${'_'+'_'.join(param_val_list)}(d_clusters,num_clusters,num_dimensions);
+    // Inverts the R matrices, computes the constant, normalizes component probabilities
+    constants_kernel_launch${'_'+'_'.join(param_val_list)}(d_components,num_components,num_dimensions);
     cudaThreadSynchronize();
     CUT_CHECK_ERROR("Constants Kernel execution failed: ");
 
     //regroup = E step
-    // Compute new cluster membership probabilities for all the events
-    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_events,d_likelihoods,num_clusters,d_loglikelihoods);
-    estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_clusters,d_cluster_memberships, num_dimensions,num_clusters,num_events,d_likelihoods);
+    // Compute new component membership probabilities for all the events
+    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components,d_component_memberships, num_dimensions,num_events,d_likelihoods,num_components,d_loglikelihoods);
+    estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components,d_component_memberships, num_dimensions,num_components,num_events,d_likelihoods);
     cudaThreadSynchronize();
     CUT_CHECK_ERROR("E-step Kernel execution failed: ");
         
@@ -120,8 +120,8 @@ float train${'_'+'_'.join(param_val_list)} (
 
   //================================ EM DONE ==============================
 
-  copy_cluster_data_GPU_to_CPU(num_clusters, num_dimensions);
-  copy_evals_data_GPU_to_CPU(num_events, num_clusters);
+  copy_component_data_GPU_to_CPU(num_components, num_dimensions);
+  copy_evals_data_GPU_to_CPU(num_events, num_components);
   
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
   free(zeroR_2b);

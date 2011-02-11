@@ -29,7 +29,7 @@ class Clusters(object):
     def init_random_covars(self):
         return numpy.random.random((self.M, self.D, self.D))
 
-    def shrink_clusters(self, new_M):
+    def shrink_components(self, new_M):
         np.delete(self.weights, s_[new_M:])
         np.delete(self.means, s_[new_M*self.D:])
         np.delete(self.covars, s_[new_M*self.D*self.D:])
@@ -65,7 +65,7 @@ class GMM(object):
             'num_threads_mstep': ['256'],
             'num_event_blocks': ['128'],
             'max_num_dimensions': ['50'],
-            'max_num_clusters': ['128'],
+            'max_num_components': ['128'],
             'diag_only': ['0'],
             'max_iters': ['10'],
             'min_iters': ['1'],
@@ -75,12 +75,12 @@ class GMM(object):
     #Flags to keep track of memory allocations, singletons
     event_data_gpu_copy = None
     event_data_cpu_copy = None
-    cluster_data_gpu_copy = None
-    cluster_data_cpu_copy = None
+    component_data_gpu_copy = None
+    component_data_cpu_copy = None
     eval_data_gpu_copy = None
     eval_data_cpu_copy = None
 
-    # nternal functions to allocate and deallocate cluster and event data on the CPU and GPU
+    # nternal functions to allocate and deallocate component and event data on the CPU and GPU
     def internal_alloc_event_data(self, X):
         #TODO: test for not null
         #if not X.any(): return
@@ -101,25 +101,25 @@ class GMM(object):
             self.get_asp_mod().dealloc_events_on_CPU()
             GMM.event_data_cpu_copy = None
 
-    def internal_alloc_cluster_data(self):
+    def internal_alloc_component_data(self):
         #TODO: test for not null
-        #if not self.clusters.weights.size: return
-        if GMM.cluster_data_gpu_copy != self.clusters:
-            if GMM.cluster_data_gpu_copy:
-                self.internal_free_cluster_data()
-            self.get_asp_mod().alloc_clusters_on_GPU(self.M, self.D)
-            self.get_asp_mod().alloc_clusters_on_CPU(self.M, self.D, self.clusters.weights, self.clusters.means, self.clusters.covars)
-            self.get_asp_mod().copy_cluster_data_CPU_to_GPU(self.M, self.D)
-            GMM.cluster_data_gpu_copy = self.clusters
-            GMM.cluster_data_cpu_copy = self.clusters
+        #if not self.components.weights.size: return
+        if GMM.component_data_gpu_copy != self.components:
+            if GMM.component_data_gpu_copy:
+                self.internal_free_component_data()
+            self.get_asp_mod().alloc_components_on_GPU(self.M, self.D)
+            self.get_asp_mod().alloc_components_on_CPU(self.M, self.D, self.components.weights, self.components.means, self.components.covars)
+            self.get_asp_mod().copy_component_data_CPU_to_GPU(self.M, self.D)
+            GMM.component_data_gpu_copy = self.components
+            GMM.component_data_cpu_copy = self.components
             
-    def internal_free_cluster_data(self):
-        if GMM.cluster_data_gpu_copy is not None:
-            self.get_asp_mod().dealloc_clusters_on_GPU()
-            GMM.cluster_data_gpu_copy = None
-        if GMM.cluster_data_cpu_copy is not None:
-            self.get_asp_mod().dealloc_clusters_on_CPU()
-            GMM.cluster_data_cpu_copy = None
+    def internal_free_component_data(self):
+        if GMM.component_data_gpu_copy is not None:
+            self.get_asp_mod().dealloc_components_on_GPU()
+            GMM.component_data_gpu_copy = None
+        if GMM.component_data_cpu_copy is not None:
+            self.get_asp_mod().dealloc_components_on_CPU()
+            GMM.component_data_cpu_copy = None
 
     def internal_alloc_eval_data(self, X):
         if self.eval_data.M != self.M or self.eval_data.N != X.shape[0] or GMM.eval_data_gpu_copy != self.eval_data:
@@ -144,7 +144,7 @@ class GMM(object):
         self.M = M
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
-        self.clusters = Clusters(M, D, weights, means, covars)
+        self.components = Clusters(M, D, weights, means, covars)
         self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
 
@@ -156,18 +156,18 @@ class GMM(object):
         cuda_mod = GMM.asp_mod.cuda_module
 
         #Add decls to preamble necessary for linking to compiled CUDA sources
-        cluster_t_decl =""" 
-            typedef struct clusters_struct {
-                float* N;        // expected # of pixels in cluster: [M]
-                float* pi;       // probability of cluster in GMM: [M]
+        component_t_decl =""" 
+            typedef struct components_struct {
+                float* N;        // expected # of pixels in component: [M]
+                float* pi;       // probability of component in GMM: [M]
                 float* constant; // Normalizing constant [M]
                 float* avgvar;    // average variance [M]
-                float* means;   // Spectral mean for the cluster: [M*D]
+                float* means;   // Spectral mean for the component: [M*D]
                 float* R;      // Covariance matrix: [M*D*D]
                 float* Rinv;   // Inverse of covariance matrix: [M*D*D]
-            } clusters_t;"""
-        GMM.asp_mod.add_to_preamble(cluster_t_decl)
-        cuda_mod.add_to_preamble([Line(cluster_t_decl)])
+            } components_t;"""
+        GMM.asp_mod.add_to_preamble(component_t_decl)
+        cuda_mod.add_to_preamble([Line(component_t_decl)])
 
         #Add necessary headers
         host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
@@ -236,39 +236,39 @@ class GMM(object):
         # Add malloc, copy and free functions
         GMM.asp_mod.add_function("", fname="alloc_events_on_CPU")
         GMM.asp_mod.add_function("", fname="alloc_events_on_GPU")
-        GMM.asp_mod.add_function("", fname="alloc_clusters_on_CPU")
-        GMM.asp_mod.add_function("", fname="alloc_clusters_on_GPU")
+        GMM.asp_mod.add_function("", fname="alloc_components_on_CPU")
+        GMM.asp_mod.add_function("", fname="alloc_components_on_GPU")
         GMM.asp_mod.add_function("", fname="alloc_evals_on_CPU")
         GMM.asp_mod.add_function("", fname="alloc_evals_on_GPU")
         GMM.asp_mod.add_function("", fname="copy_event_data_CPU_to_GPU")
-        GMM.asp_mod.add_function("", fname="copy_cluster_data_CPU_to_GPU")
-        GMM.asp_mod.add_function("", fname="copy_cluster_data_GPU_to_CPU")
+        GMM.asp_mod.add_function("", fname="copy_component_data_CPU_to_GPU")
+        GMM.asp_mod.add_function("", fname="copy_component_data_GPU_to_CPU")
         GMM.asp_mod.add_function("", fname="copy_evals_data_GPU_to_CPU")
         GMM.asp_mod.add_function("", fname="dealloc_events_on_CPU")
         GMM.asp_mod.add_function("", fname="dealloc_events_on_GPU")
-        GMM.asp_mod.add_function("", fname="dealloc_clusters_on_CPU")
-        GMM.asp_mod.add_function("", fname="dealloc_clusters_on_GPU")
-        GMM.asp_mod.add_function("", fname="dealloc_temp_clusters_on_CPU")
+        GMM.asp_mod.add_function("", fname="dealloc_components_on_CPU")
+        GMM.asp_mod.add_function("", fname="dealloc_components_on_GPU")
+        GMM.asp_mod.add_function("", fname="dealloc_temp_components_on_CPU")
         GMM.asp_mod.add_function("", fname="dealloc_evals_on_CPU")
         GMM.asp_mod.add_function("", fname="dealloc_evals_on_GPU")
 
         # Add getter functions
-        GMM.asp_mod.add_function("", fname="get_temp_cluster_pi")
-        GMM.asp_mod.add_function("", fname="get_temp_cluster_means")
-        GMM.asp_mod.add_function("", fname="get_temp_cluster_covars")
+        GMM.asp_mod.add_function("", fname="get_temp_component_pi")
+        GMM.asp_mod.add_function("", fname="get_temp_component_means")
+        GMM.asp_mod.add_function("", fname="get_temp_component_covars")
         
-        # Add merge clusters function
-        GMM.asp_mod.add_function("", fname="relink_clusters_on_CPU")
+        # Add merge components function
+        GMM.asp_mod.add_function("", fname="relink_components_on_CPU")
         GMM.asp_mod.add_function("", fname="compute_distance_rissanen")
-        GMM.asp_mod.add_function("", fname="merge_clusters")
+        GMM.asp_mod.add_function("", fname="merge_components")
 
-        #Add Boost interface links for clusters and distance objects
-        GMM.asp_mod.add_to_init("""boost::python::class_<clusters_struct>("Clusters");
-            boost::python::scope().attr("clusters") = boost::python::object(boost::python::ptr(&clusters));""")
-        GMM.asp_mod.add_to_init("""boost::python::class_<return_cluster_container>("ReturnClusterContainer")
-            .def(pyublas::by_value_rw_member( "new_cluster", &return_cluster_container::cluster))
-            .def(pyublas::by_value_rw_member( "distance", &return_cluster_container::distance)) ;
-            boost::python::scope().attr("cluster_distance") = boost::python::object(boost::python::ptr(&ret));""")
+        #Add Boost interface links for components and distance objects
+        GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Clusters");
+            boost::python::scope().attr("components") = boost::python::object(boost::python::ptr(&components));""")
+        GMM.asp_mod.add_to_init("""boost::python::class_<return_component_container>("ReturnClusterContainer")
+            .def(pyublas::by_value_rw_member( "new_component", &return_component_container::component))
+            .def(pyublas::by_value_rw_member( "distance", &return_component_container::distance)) ;
+            boost::python::scope().attr("component_distance") = boost::python::object(boost::python::ptr(&ret));""")
         
         # Setup toolchain and compile
         def pyublas_inc():
@@ -295,7 +295,7 @@ class GMM(object):
 
     def __del__(self):
         self.internal_free_event_data()
-        self.internal_free_cluster_data()
+        self.internal_free_component_data()
         self.internal_free_eval_data()
     
     def train_using_python(self, input_data):
@@ -322,7 +322,7 @@ class GMM(object):
             print "Error: Data has %d features, model expects %d features." % (input_data.shape[1], self.D)
         self.internal_alloc_event_data(input_data)
         self.internal_alloc_eval_data(input_data)
-        self.internal_alloc_cluster_data()
+        self.internal_alloc_component_data()
         self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, N, input_data)
         return self
 
@@ -349,26 +349,26 @@ class GMM(object):
         logprob, posteriors = self.eval(obs_data)
         return posteriors.argmax(axis=0) # N indexes of most likely components
 
-    def merge_clusters(self, min_c1, min_c2, min_cluster):
-        self.get_asp_mod().merge_clusters(min_c1, min_c2, min_cluster, self.M, self.D)
+    def merge_components(self, min_c1, min_c2, min_component):
+        self.get_asp_mod().merge_components(min_c1, min_c2, min_component, self.M, self.D)
         self.M -= 1
-        w, m, c = self.clusters.shrink_clusters(self.M)
-        self.get_asp_mod().relink_clusters_on_CPU(w, m, c)
-        self.get_asp_mod().dealloc_temp_clusters_on_CPU()
+        w, m, c = self.components.shrink_components(self.M)
+        self.get_asp_mod().relink_components_on_CPU(w, m, c)
+        self.get_asp_mod().dealloc_temp_components_on_CPU()
         return 
 
     def compute_distance_rissanen(self, c1, c2):
         self.get_asp_mod().compute_distance_rissanen(c1, c2, self.D)
-        new_cluster = self.get_asp_mod().compiled_module.cluster_distance.new_cluster
-        dist = self.get_asp_mod().compiled_module.cluster_distance.distance
-        return new_cluster, dist
+        new_component = self.get_asp_mod().compiled_module.component_distance.new_component
+        dist = self.get_asp_mod().compiled_module.component_distance.distance
+        return new_component, dist
 
     def compute_distance_BIC(self, c1, c3):
         pass #TODO
 
-    def get_new_cluster_means(self, new_cluster):
-        return self.get_asp_mod().get_temp_cluster_means(new_cluster, self.D).reshape((1, self.D))
+    def get_new_component_means(self, new_component):
+        return self.get_asp_mod().get_temp_component_means(new_component, self.D).reshape((1, self.D))
 
-    def get_new_cluster_covars(self, new_cluster):
-        return self.get_asp_mod().get_temp_cluster_covars(new_cluster, self.D).reshape((1, self.D, self.D))
+    def get_new_component_covars(self, new_component):
+        return self.get_asp_mod().get_temp_component_covars(new_component, self.D).reshape((1, self.D, self.D))
     

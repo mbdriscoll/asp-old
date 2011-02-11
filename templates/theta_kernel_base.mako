@@ -95,22 +95,22 @@ __device__ void invert(float* data, int actualsize, float* log_determinant)  {
     }
 }
 
-__device__ void normalize_pi(clusters_t* clusters, int num_clusters) {
+__device__ void normalize_pi(components_t* components, int num_components) {
     __shared__ float sum;
     
     // TODO: could maybe use a parallel reduction..but the # of elements is really small
     // What is better: having thread 0 compute a shared sum and sync, or just have each one compute the sum?
     if(threadIdx.x == 0) {
         sum = 0.0f;
-        for(int i=0; i<num_clusters; i++) {
-            sum += clusters->pi[i];
+        for(int i=0; i<num_components; i++) {
+            sum += components->pi[i];
         }
     }
     
     __syncthreads();
     
-    for(int c=threadIdx.x; c < num_clusters; c += blockDim.x) {
-        clusters->pi[threadIdx.x] /= sum;
+    for(int c=threadIdx.x; c < num_components; c += blockDim.x) {
+        components->pi[threadIdx.x] /= sum;
     }
  
     __syncthreads();
