@@ -16,9 +16,9 @@ class Components(object):
 
         self.M = M
         self.D = D
-        self.weights = weights or np.empty(M, dtype=np.float32)
-        self.means = means or np.empty(M*D, dtype=np.float32)
-        self.covars = covars or np.empty(M*D*D, dtype=np.float32)
+        self.weights = weights if weights is not None else np.empty(M, dtype=np.float32)
+        self.means = means if means is not None else  np.empty(M*D, dtype=np.float32)
+        self.covars = covars if covars is not None else  np.empty(M*D*D, dtype=np.float32)
 
     def init_random_weights(self):
         return numpy.random.random((self.M))
@@ -379,8 +379,8 @@ def compute_distance_BIC(gmm1, gmm2, data):
 
     w = np.append(ratio1*gmm1.components.weights, ratio2*gmm2.components.weights)
     m = np.append(gmm1.components.means, gmm2.components.means)
-    c = np.append(gmm1.components.covarss, gmm2.components.covars)
-    temp_GMM = GMM(nComps, gmm1.D, w, m, c)
+    c = np.append(gmm1.components.covars, gmm2.components.covars)
+    temp_GMM = GMM(nComps, gmm1.D, weights=w, means=m, covars=c)
 
     temp_GMM.train(data)
 
