@@ -384,5 +384,7 @@ def compute_distance_BIC(gmm1, gmm2, data):
 
     temp_GMM.train(data)
 
-    return temp_GMM.eval_data.likelihood - (gmm1.eval_data.likelihood + gmm2.eval_data.likelihood)
+    score = temp_GMM.eval_data.likelihood - (gmm1.eval_data.likelihood + gmm2.eval_data.likelihood)
+    #print temp_GMM.eval_data.likelihood, gmm1.eval_data.likelihood, gmm2.eval_data.likelihood, score
+    return temp_GMM, score
 

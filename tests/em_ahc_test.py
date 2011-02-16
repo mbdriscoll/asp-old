@@ -28,7 +28,7 @@ class EMTester(object):
         self.num_subplots = num_subps
         self.plot_id = num_subps/2*100 + 21
         if from_file:
-            self.X = np.recfromcsv('IS1000a.csv', names=None, dtype=np.float32)
+            self.X = np.recfromcsv('IS1000a.csv', names=True, dtype=np.float32)
             self.N = self.X.shape[0]
             self.D = self.X.shape[1]
         else:
@@ -56,50 +56,63 @@ class EMTester(object):
         for g, x in init_training:
             g.train(x)
 
-        score = 10000.0
-        old_score = 0.0
-        epsilon = 1.0
-        #while (score - old_score > epsilon):
+        best_BIC_score = 1.0
+        while (best_BIC_score > 0 and len(self.gmm_list) > 1):
+            print "Num GMMs: %d, last score: %d" % (len(self.gmm_list), best_BIC_score)
 
-        num_clusters = len(self.gmm_list)
-        #    resegment data:
-        likelihoods = self.gmm_list[0].score(self.X)
-        for g in self.gmm_list[1:]:
-            likelihoods = np.column_stack((likelihoods, g.score(self.X)))
-        most_likely = likelihoods.argmax(axis=1)
+            num_clusters = len(self.gmm_list)
+            #    resegment data:
+            likelihoods = self.gmm_list[0].score(self.X)
+            for g in self.gmm_list[1:]:
+                likelihoods = np.column_stack((likelihoods, g.score(self.X)))
+            most_likely = likelihoods.argmax(axis=1)
 
-        iter_training = {}
-        for i in range(250, self.N, 250):
+            iter_training = {}
+            for i in range(250, self.N, 250):
+                votes = np.zeros(num_clusters)
+                for j in range(i-250, i):
+                    votes[most_likely[j]] += 1
+                iter_training.setdefault(self.gmm_list[votes.argmax()],[]).append(self.X[i-250:i,:])
             votes = np.zeros(num_clusters)
-            for j in range(i-250, i):
+            for j in range((self.N/250)*250, self.N):
                 votes[most_likely[j]] += 1
-            iter_training.setdefault(self.gmm_list[votes.argmax()],[]).append(self.X[i-250:i,:])
-        votes = np.zeros(num_clusters)
-        for j in range((self.N/250)*250, self.N):
-            votes[most_likely[j]] += 1
-        iter_training[ self.gmm_list[votes.argmax()]].append(self.X[(self.N/250)*250:self.N,:])
+            iter_training[ self.gmm_list[votes.argmax()]].append(self.X[(self.N/250)*250:self.N,:])
 
-        iter_bic_list = []
-        for g, data_list in iter_training.iteritems():
-            cluster_data =  data_list[0]
-            for d in data_list[1:]:
-                cluster_data = np.concatenate((cluster_data, d))
-            cluster_data = np.ascontiguousarray(cluster_data)
-            g.train(cluster_data)
-            iter_bic_list.append((g,cluster_data))
-        
-        for gmm1idx in range(len(iter_bic_list)):
-            for gmm2idx in range(gmm1idx+1, len(iter_bic_list)):
-                g1, d1 = iter_bic_list[gmm1idx]
-                g2, d2 = iter_bic_list[gmm2idx] 
-                combined_data = np.concatenate((d1, d2))
-                score = compute_distance_BIC(g1, g2, combined_data)
-                print score
-        
-        #    for all pairs of gmms
-        #        calculate bic scores of pairs and keep merged gmms around
-        #    take the new gmm with the largest positive difference, add it to the list and remove the ones its replacing
+            self.gmm_list = filter(lambda x: x in iter_training.keys(), self.gmm_list)
+
+            iter_bic_list = []
+            for g, data_list in iter_training.iteritems():
+                cluster_data =  data_list[0]
+                for d in data_list[1:]:
+                    cluster_data = np.concatenate((cluster_data, d))
+                cluster_data = np.ascontiguousarray(cluster_data)
+                g.train(cluster_data)
+                iter_bic_list.append((g,cluster_data))
             
+            best_merged_gmm = None
+            best_BIC_score = 0.0
+            merged_tuple = None
+            for gmm1idx in range(len(iter_bic_list)):
+                for gmm2idx in range(gmm1idx+1, len(iter_bic_list)):
+                    g1, d1 = iter_bic_list[gmm1idx]
+                    g2, d2 = iter_bic_list[gmm2idx] 
+                    combined_data = np.concatenate((d1, d2))
+                    new_gmm, score = compute_distance_BIC(g1, g2, combined_data)
+                    #print score
+                    if score > best_BIC_score: 
+                        best_merged_gmm = new_gmm
+                        merged_tuple = (g1, g2)
+                        best_BIC_score = score
+            
+            if best_BIC_score > 0.0:
+                self.gmm_list.remove(merged_tuple[0]) 
+                self.gmm_list.remove(merged_tuple[1]) 
+                self.gmm_list.append(best_merged_gmm)
+
+        print self.gmm_list
+        
+        if len(self.gmm_list) == 1: print self.gmm_list[0].components.means.reshape((self.gmm_list[0].M, self.D)), self.gmm_list[0].components.covars.reshape((self.gmm_list[0].M, self.D, self.D))
+
 
     def test_cytosis_ahc(self):
         M_start = self.M
@@ -110,27 +123,27 @@ class EMTester(object):
 
             print "======================== AHC loop: M = ", M+1, " ==========================="
             self.gmm.train(self.X)
-        
-            #plotting
-            means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
-            covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
-            Y = self.gmm.predict(self.X)
-            if(self.plot_id % 10 <= self.num_subplots):
-                self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.gmm.D),str(self.gmm.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
-                self.plot_id += 1
+    
+        #plotting
+        means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
+        covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
+        Y = self.gmm.predict(self.X)
+        if(self.plot_id % 10 <= self.num_subplots):
+            self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.gmm.D),str(self.gmm.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
+            self.plot_id += 1
 
-            #find closest components and merge
-            if M > 0: #don't merge if there is only one component
-                gmm_list = []
-                for c1 in range(0, self.gmm.M):
-                    for c2 in range(c1+1, self.gmm.M):
-                        new_component, dist = self.gmm.compute_distance_rissanen(c1, c2)
-                        gmm_list.append((dist, (c1, c2, new_component)))
-                        #print "gmm_list after append: ", gmm_list
-                        
-                #compute minimum distance
-                min_c1, min_c2, min_component = min(gmm_list, key=lambda gmm: gmm[0])[1]
-                self.gmm.merge_components(min_c1, min_c2, min_component)
+        #find closest components and merge
+        if M > 0: #don't merge if there is only one component
+            gmm_list = []
+            for c1 in range(0, self.gmm.M):
+                for c2 in range(c1+1, self.gmm.M):
+                    new_component, dist = self.gmm.compute_distance_rissanen(c1, c2)
+                    gmm_list.append((dist, (c1, c2, new_component)))
+                    #print "gmm_list after append: ", gmm_list
+                    
+            #compute minimum distance
+            min_c1, min_c2, min_component = min(gmm_list, key=lambda gmm: gmm[0])[1]
+            self.gmm.merge_components(min_c1, min_c2, min_component)
 
     def time_cytosis_ahc(self):
         M_start = self.M
@@ -184,12 +197,12 @@ if __name__ == '__main__':
             'min_iters': ['1'],
             'covar_version_name': ['V2A']
     }
-    emt = EMTester(False, variant_param_space, num_subplots)
+    emt = EMTester(True, variant_param_space, num_subplots)
     #emt.new_gmm(6)
     #t = timeit.Timer(emt.time_ahc)
     #print t.timeit(number=1)
     #emt.test_cytosis_ahc()
     #emt.plot()
-    emt.new_gmm_list(5, 4)
+    emt.new_gmm_list(5, 16)
     emt.test_speech_ahc() 
 
