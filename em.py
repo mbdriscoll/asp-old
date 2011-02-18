@@ -83,9 +83,7 @@ class GMM(object):
 
     # nternal functions to allocate and deallocate component and event data on the CPU and GPU
     def internal_alloc_event_data(self, X):
-        #TODO: test for not null
-        #if not X.any(): return
-        if not np.array_equal(GMM.event_data_gpu_copy, X):
+        if not np.array_equal(GMM.event_data_gpu_copy, X) and X is not None:
             if GMM.event_data_gpu_copy is not None:
                 self.internal_free_event_data()
             self.get_asp_mod().alloc_events_on_CPU(X, X.shape[0], X.shape[1])
@@ -103,8 +101,6 @@ class GMM(object):
             GMM.event_data_cpu_copy = None
 
     def internal_alloc_component_data(self):
-        #TODO: test for not null
-        #if not self.components.weights.size: return
         if GMM.component_data_gpu_copy != self.components:
             if GMM.component_data_gpu_copy:
                 self.internal_free_component_data()
@@ -123,14 +119,15 @@ class GMM(object):
             GMM.component_data_cpu_copy = None
 
     def internal_alloc_eval_data(self, X):
-        if self.eval_data.M != self.M or self.eval_data.N != X.shape[0] or GMM.eval_data_gpu_copy != self.eval_data:
-            if GMM.eval_data_gpu_copy is not None:
-                self.internal_free_eval_data()
-            self.eval_data.resize(X.shape[0], self.M)
-            self.get_asp_mod().alloc_evals_on_GPU(X.shape[0], self.M)
-            self.get_asp_mod().alloc_evals_on_CPU(self.eval_data.memberships, self.eval_data.loglikelihoods)
-            GMM.eval_data_gpu_copy = self.eval_data
-            GMM.eval_data_cpu_copy = self.eval_data
+        if X is not None:
+            if self.eval_data.M != self.M or self.eval_data.N != X.shape[0] or GMM.eval_data_gpu_copy != self.eval_data:
+                if GMM.eval_data_gpu_copy is not None:
+                    self.internal_free_eval_data()
+                self.eval_data.resize(X.shape[0], self.M)
+                self.get_asp_mod().alloc_evals_on_GPU(X.shape[0], self.M)
+                self.get_asp_mod().alloc_evals_on_CPU(self.eval_data.memberships, self.eval_data.loglikelihoods)
+                GMM.eval_data_gpu_copy = self.eval_data
+                GMM.eval_data_cpu_copy = self.eval_data
             
     def internal_free_eval_data(self):
         if GMM.eval_data_gpu_copy is not None:
@@ -201,12 +198,8 @@ class GMM(object):
         cuda_mod.add_to_preamble([Line(component_t_decl)])
 
         #Add necessary headers
-        host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h', 'pyublas/numpy.hpp']
+        host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h', 'pyublas/numpy.hpp', 'cuda_runtime.h']
         for x in host_system_header_names: GMM.asp_mod.add_to_preamble([Include(x, True)])
-        cuda_mod.add_to_preamble([Include('stdio.h',True)])
-        #TODO: Figure out whether we can free ourselves from cutils
-        host_project_header_names = [ 'cuda_runtime.h'] 
-        for x in host_project_header_names: GMM.asp_mod.add_to_preamble([Include(x, False)])
 
         #Add C/CUDA source code that is not based on code variant parameters
         #TODO: stop using templates and just read from file?
@@ -261,35 +254,10 @@ class GMM(object):
 
         generate_permutations( self.variant_param_space.keys(), self.variant_param_space.values(), {}, render_and_add_to_module)
 
-        #TODO: Change to list comprehension
-        # Add malloc, copy and free functions
-        GMM.asp_mod.add_function("", fname="alloc_events_on_CPU")
-        GMM.asp_mod.add_function("", fname="alloc_events_on_GPU")
-        GMM.asp_mod.add_function("", fname="alloc_components_on_CPU")
-        GMM.asp_mod.add_function("", fname="alloc_components_on_GPU")
-        GMM.asp_mod.add_function("", fname="alloc_evals_on_CPU")
-        GMM.asp_mod.add_function("", fname="alloc_evals_on_GPU")
-        GMM.asp_mod.add_function("", fname="copy_event_data_CPU_to_GPU")
-        GMM.asp_mod.add_function("", fname="copy_component_data_CPU_to_GPU")
-        GMM.asp_mod.add_function("", fname="copy_component_data_GPU_to_CPU")
-        GMM.asp_mod.add_function("", fname="copy_evals_data_GPU_to_CPU")
-        GMM.asp_mod.add_function("", fname="dealloc_events_on_CPU")
-        GMM.asp_mod.add_function("", fname="dealloc_events_on_GPU")
-        GMM.asp_mod.add_function("", fname="dealloc_components_on_CPU")
-        GMM.asp_mod.add_function("", fname="dealloc_components_on_GPU")
-        GMM.asp_mod.add_function("", fname="dealloc_temp_components_on_CPU")
-        GMM.asp_mod.add_function("", fname="dealloc_evals_on_CPU")
-        GMM.asp_mod.add_function("", fname="dealloc_evals_on_GPU")
-
-        # Add getter functions
-        GMM.asp_mod.add_function("", fname="get_temp_component_pi")
-        GMM.asp_mod.add_function("", fname="get_temp_component_means")
-        GMM.asp_mod.add_function("", fname="get_temp_component_covars")
-        
-        # Add merge components function
-        GMM.asp_mod.add_function("", fname="relink_components_on_CPU")
-        GMM.asp_mod.add_function("", fname="compute_distance_rissanen")
-        GMM.asp_mod.add_function("", fname="merge_components")
+        #Add Boost interface links for helper functions whose bodies are already contained in gaussian.mako
+        names_of_helper_funcs = ["alloc_events_on_CPU", "alloc_events_on_GPU", "alloc_components_on_CPU", "alloc_components_on_GPU", "alloc_evals_on_CPU", "alloc_evals_on_GPU", "copy_event_data_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_data_GPU_to_CPU", "dealloc_events_on_CPU", "dealloc_events_on_GPU", "dealloc_components_on_CPU", "dealloc_components_on_GPU", "dealloc_temp_components_on_CPU", "dealloc_evals_on_CPU", "dealloc_evals_on_GPU", "get_temp_component_pi", "get_temp_component_means", "get_temp_component_covars", "relink_components_on_CPU", "compute_distance_rissanen", "merge_components" ]
+        for fname in names_of_helper_funcs:
+            GMM.asp_mod.add_function("", fname)
 
         #Add Boost interface links for components and distance objects
         GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
@@ -344,7 +312,7 @@ class GMM(object):
         else: return []
 
     def train(self, input_data):
-        N = input_data.shape[0] #TODO: handle types other than np.array?
+        N = input_data.shape[0] 
         if input_data.shape[1] != self.D:
             print "Error: Data has %d features, model expects %d features." % (input_data.shape[1], self.D)
         self.internal_alloc_event_data(input_data)
