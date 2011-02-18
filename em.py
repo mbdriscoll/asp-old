@@ -53,9 +53,11 @@ class EvalData(object):
 
 class GMM(object):
 
-    #Singleton ASP mode shared by all instances of GMM
+    #Singleton ASP modules shared by all instances of GMM
     asp_mod = None    
     def get_asp_mod(self): return GMM.asp_mod or self.initialize_asp_mod()
+    gpu_util_mod = None
+    def get_gpu_util_mod(self): return GMM.gpu_util_mod or self.initialize_gpu_util_mod()
 
     #Default parameter space for code variants
     variant_param_default = {
@@ -147,6 +149,36 @@ class GMM(object):
         self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
 
+    #Called the first time a GMM instance tries to use a GPU utility function
+    def initialize_gpu_util_mod(self):
+        GMM.gpu_util_mod = asp_module.ASPModule(use_cuda=True)
+        #TODO: Figure out what kind of file to put this in
+        #TODO: Or, redo these using more robust functionality stolen from PyCuda
+        util_funcs = [ ("""
+            void set_GPU_device(int device) {
+              int GPUCount;
+              cudaGetDeviceCount(&GPUCount);
+              if(GPUCount == 0) {
+                device = 0;
+              } else if (device >= GPUCount) {
+                device  = GPUCount-1;
+              }
+              cudaSetDevice(device);
+            }""", "set_GPU_device") ,
+            ("""
+            boost::python::tuple get_GPU_device_capability_as_tuple(int device) {
+              int major, minor;
+              cuDeviceComputeCapability(&major, &minor, device);
+              return boost::python::make_tuple(major, minor);
+            }
+            """, "get_GPU_device_capability_as_tuple")]
+        for fbody, fname in util_funcs:
+            GMM.gpu_util_mod.add_function(fbody, fname)
+        host_project_header_names = [ 'cuda_runtime.h'] 
+        for x in host_project_header_names: GMM.gpu_util_mod.add_to_preamble([Include(x, False)])
+        GMM.gpu_util_mod.compile()
+        return GMM.gpu_util_mod
+
     #Called the first time a GMM instance tries to use a specialized function
     def initialize_asp_mod(self):
 
@@ -229,9 +261,7 @@ class GMM(object):
 
         generate_permutations( self.variant_param_space.keys(), self.variant_param_space.values(), {}, render_and_add_to_module)
 
-        # Add set GPU device function
-        GMM.asp_mod.add_function("", fname="set_GPU_device")
-        
+        #TODO: Change to list comprehension
         # Add malloc, copy and free functions
         GMM.asp_mod.add_function("", fname="alloc_events_on_CPU")
         GMM.asp_mod.add_function("", fname="alloc_events_on_GPU")
@@ -277,16 +307,15 @@ class GMM(object):
             file, pathname, descr = find_module("numpy")
             return join(pathname, "core", "include")
 
-        nvcc_toolchain = GMM.asp_mod.nvcc_toolchain
-        nvcc_toolchain.cflags += ["-arch=sm_13" if self.device else "-arch=sm_20"]
         GMM.asp_mod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
+
+        self.get_gpu_util_mod().set_GPU_device(self.device)
+        capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device)
+        print capability
+
+        nvcc_toolchain = GMM.asp_mod.nvcc_toolchain
+        nvcc_toolchain.cflags += ["-arch=sm_%s%s" % (('1','3') if self.device else ('2','0')) ]
         nvcc_toolchain.add_library("project",['.','./include'],[],[])
-
-        #TODO: Get rid of awful hardcoded paths necessitaty by cutils
-        GMM.asp_mod.toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/henry/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
-        nvcc_toolchain.add_library("cutils",['/home/egonina/NVIDIA_GPU_Computing_SDK/C/common/inc','/home/egonina/NVIDIA_GPU_Computing_SDK/C/shared/inc'],['/home/egonina/NVIDIA_GPU_Computing_SDK/C/lib','/home/egonina/NVIDIA_GPU_Computing_SDK/shared/lib'],['cutil_x86_64', 'shrutil_x86_64'])
-
-        GMM.asp_mod.set_GPU_device(self.device)
         
         #print GMM.asp_mod.module.generate()
         GMM.asp_mod.compile()

@@ -258,21 +258,6 @@ void copy_evals_data_GPU_to_CPU(int num_events, int num_components){
   CUDA_SAFE_CALL(cudaMemcpy(loglikelihoods, d_loglikelihoods, sizeof(float)*num_events, cudaMemcpyDeviceToHost));
 }
 
-// ================== Set the GPU Device ===================
-void set_GPU_device(int device) {
-  // Set the device to run on... 0 for GTX 480, 1 for GTX 285 on oak
-  int GPUCount;
-  CUDA_SAFE_CALL(cudaGetDeviceCount(&GPUCount));
-  if(GPUCount == 0) {
-    //printf("Only 1 CUDA device found, defaulting to it.\n");
-    device = 0;
-  } else if (device >= GPUCount) {
-    device  = GPUCount-1;
-  }
-  CUDA_SAFE_CALL(cudaSetDevice(device));
-}
-
-
 // ================== Event data dellocation on CPU  ================= :
 void dealloc_events_on_CPU() {
   //free(fcs_data_by_event);
