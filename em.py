@@ -138,13 +138,18 @@ class GMM(object):
             GMM.eval_data_cpu_copy = None
 
     def __init__(self, M, D, variant_param_space=None, device=0, means=None, covars=None, weights=None):
-        self.device = device
         self.M = M
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
         self.components = Components(M, D, weights, means, covars)
         self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
+
+        self.device = device
+        self.get_gpu_util_mod().set_GPU_device(self.device)
+        self.capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device)
+        #TODO:Add more variant params based on GPU characteristics
+        self.variant_param_space['gpu_has_floating_point_atomics'] = ['0' if self.capability[0] < 2 else '1']
 
     #Called the first time a GMM instance tries to use a GPU utility function
     def initialize_gpu_util_mod(self):
@@ -276,12 +281,8 @@ class GMM(object):
             return join(pathname, "core", "include")
 
         GMM.asp_mod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
-
-        self.get_gpu_util_mod().set_GPU_device(self.device)
-        capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device)
-
         nvcc_toolchain = GMM.asp_mod.nvcc_toolchain
-        nvcc_toolchain.cflags += ["-arch=sm_%s%s" % capability ]
+        nvcc_toolchain.cflags += ["-arch=sm_%s%s" % self.capability ]
         nvcc_toolchain.add_library("project",['.','./include'],[],[])
         
         #print GMM.asp_mod.module.generate()

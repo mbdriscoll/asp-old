@@ -519,7 +519,6 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
 }
 
 %elif covar_version_name.upper() in ['2B','V2B','_V2B']:
- 
 /*
  * Computes the covariance matrices of the data (R matrix)
  * Must be launched with a M x B blocks and D x D/2 threads:
@@ -567,7 +566,16 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
     myR[matrix_index] = cov_sum;
      
+#if ${gpu_has_floating_point_atomics}
     float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
+#else
+    float log_temp = log(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
+    float log_myR = log(myR[matrix_index]);
+    unsigned long long fixp_temp = floor(log_temp*10000000);
+    unsigned long long fixp_myR = floor(log_myR*10000000);
+    unsigned long long fixp_old = atomicAdd(&fixp_temp, fixp_myR);
+    float old = exp((float)fixp_old/10000000);
+#endif
 
     __syncthreads();
 
