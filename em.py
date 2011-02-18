@@ -21,13 +21,13 @@ class Components(object):
         self.covars = covars if covars is not None else  np.empty(M*D*D, dtype=np.float32)
 
     def init_random_weights(self):
-        return numpy.random.random((self.M))
+        self.weights = numpy.random.random((self.M))
 
     def init_random_means(self):
-        return numpy.random.random((self.M,self.D))
+        self.means = numpy.random.random((self.M,self.D))
 
     def init_random_covars(self):
-        return numpy.random.random((self.M, self.D, self.D))
+        self.covars = numpy.random.random((self.M, self.D, self.D))
 
     def shrink_components(self, new_M):
         self.weights = np.resize(self.weights, new_M) 
