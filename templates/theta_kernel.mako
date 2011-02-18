@@ -571,10 +571,10 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 #else
     float log_temp = log(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
     float log_myR = log(myR[matrix_index]);
-    unsigned long long fixp_temp = floor(log_temp*10000000);
-    unsigned long long fixp_myR = floor(log_myR*10000000);
-    unsigned long long fixp_old = atomicAdd(&fixp_temp, fixp_myR);
-    float old = exp((float)fixp_old/10000000);
+    int fixp_temp = floor(log_temp*1000000);
+    int fixp_myR = floor(log_myR*1000000);
+    int fixp_old = atomicAdd(&fixp_temp, fixp_myR);
+    float old = exp((float)fixp_old/1000000);
 #endif
 
     __syncthreads();
