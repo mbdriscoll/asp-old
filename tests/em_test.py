@@ -22,10 +22,11 @@ def generate_synthetic_data(N):
 
 class EMTester(object):
 
-    def __init__(self, from_file, variant_param_space, num_subps):
+    def __init__(self, from_file, variant_param_space, num_subps, device_id):
         
         self.results = {}
         self.variant_param_space = variant_param_space
+        self.device_id = device_id
         self.num_subplots = num_subps
         self.plot_id = num_subps*100 + 11
         
@@ -40,7 +41,7 @@ class EMTester(object):
 
     def new_gmm(self, M):
         self.M = M
-        self.gmm = GMM(self.M, self.D, self.variant_param_space)
+        self.gmm = GMM(self.M, self.D, self.variant_param_space, self.device_id)
 
     def test_pure_python(self):
         means, covars = self.gmm.train_using_python(self.X)
@@ -76,6 +77,7 @@ class EMTester(object):
         pl.show()
         
 if __name__ == '__main__':
+    device_id = 0
     num_subplots = 5
     variant_param_space = {
             'num_blocks_estep': ['16'],
@@ -89,7 +91,7 @@ if __name__ == '__main__':
             'min_iters': ['1'],
             'covar_version_name': ['V1', 'V2A', 'V2B', 'V3']
     }
-    emt = EMTester(False, variant_param_space, num_subplots)
+    emt = EMTester(False, variant_param_space, num_subplots, device_id)
     emt.new_gmm(3)
     emt.test_pure_python()
     emt.test_sejits()
