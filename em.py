@@ -311,10 +311,9 @@ class GMM(object):
 
         self.get_gpu_util_mod().set_GPU_device(self.device)
         capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device)
-        print capability
 
         nvcc_toolchain = GMM.asp_mod.nvcc_toolchain
-        nvcc_toolchain.cflags += ["-arch=sm_%s%s" % (('1','3') if self.device else ('2','0')) ]
+        nvcc_toolchain.cflags += ["-arch=sm_%s%s" % capability ]
         nvcc_toolchain.add_library("project",['.','./include'],[],[])
         
         #print GMM.asp_mod.module.generate()
