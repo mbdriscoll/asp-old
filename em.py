@@ -169,11 +169,11 @@ class GMM(object):
         cuda_mod.add_to_preamble([Line(component_t_decl)])
 
         #Add necessary headers
-        host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp' ]
+        host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h', 'pyublas/numpy.hpp']
         for x in host_system_header_names: GMM.asp_mod.add_to_preamble([Include(x, True)])
         cuda_mod.add_to_preamble([Include('stdio.h',True)])
         #TODO: Figure out whether we can free ourselves from cutils
-        host_project_header_names = [ 'cutil_inline.h'] 
+        host_project_header_names = [ 'cuda_runtime.h'] 
         for x in host_project_header_names: GMM.asp_mod.add_to_preamble([Include(x, False)])
 
         #Add C/CUDA source code that is not based on code variant parameters

@@ -10,6 +10,26 @@
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
 
+#  define CUT_CHECK_ERROR(errorMessage) {                                    \
+    cudaError_t err = cudaGetLastError();                                    \
+    if( cudaSuccess != err) {                                                \
+        fprintf(stderr, "Cuda error: %s in file '%s' in line %i : %s.\n",    \
+                errorMessage, __FILE__, __LINE__, cudaGetErrorString( err) );\
+        exit(EXIT_FAILURE);                                                  \
+    }                                                                        \
+   }
+
+#  define CUDA_SAFE_CALL_NO_SYNC( call) {                                    \
+    cudaError err = call;                                                    \
+    if( cudaSuccess != err) {                                                \
+        fprintf(stderr, "Cuda error in file '%s' in line %i : %s.\n",        \
+                __FILE__, __LINE__, cudaGetErrorString( err) );              \
+        exit(EXIT_FAILURE);                                                  \
+    } }
+
+#  define CUDA_SAFE_CALL( call)     CUDA_SAFE_CALL_NO_SYNC(call);            \
+
+
 typedef struct return_component_container
 {
   boost::python::object component;
