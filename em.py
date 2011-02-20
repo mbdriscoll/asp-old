@@ -10,6 +10,33 @@ import sys
 from imp import find_module
 from os.path import join
 
+class DeviceParameters(object):
+    pass
+
+class DeviceCUDA10(DeviceParameters):
+    def __init__(self):
+        self.params = {}
+        # Feature support
+        self.params['supports_32b_floating_point_atomics'] = 0
+        # Technical specifications
+        self.params['max_xy_grid_dim'] = 65535
+        self.params['max_threads_per_block'] = 512
+        self.params['max_shared_memory_capacity_per_SM'] = 16348
+        #TODO: Processor-implementation-specific parameters that impact performance, e.g. the number of SMs
+
+class DeviceCUDA20(DeviceParameters):
+    def __init__(self):
+        self.params = {}
+        # Feature support
+        self.params['supports_32b_floating_point_atomics'] = 1
+        # Technical specifications
+        self.params['max_xy_grid_dim'] = 65535
+        self.params['max_threads_per_block'] = 1024
+        self.params['max_shared_memory_capacity_per_SM'] = 16384*3
+        #TODO: Processor-implementation-specific parameters that impact performance, e.g. the number of SMs
+
+
+#TODO: Change to GMMComponents
 class Components(object):
     
     def __init__(self, M, D, weights = None, means = None, covars = None):
@@ -58,6 +85,7 @@ class GMM(object):
     def get_asp_mod(self): return GMM.asp_mod or self.initialize_asp_mod()
     gpu_util_mod = None
     def get_gpu_util_mod(self): return GMM.gpu_util_mod or self.initialize_gpu_util_mod()
+    device_id = None
 
     #Default parameter space for code variants
     variant_param_default = {
@@ -65,8 +93,8 @@ class GMM(object):
             'num_threads_estep': ['512'],
             'num_threads_mstep': ['256'],
             'num_event_blocks': ['128'],
-            'max_num_dimensions': ['50'],
-            'max_num_components': ['128'],
+            'max_num_dimensions': ['41'],
+            'max_num_components': ['81'],
             'diag_only': ['0'],
             'max_iters': ['10'],
             'min_iters': ['1'],
@@ -137,7 +165,7 @@ class GMM(object):
             self.get_asp_mod().dealloc_evals_on_CPU()
             GMM.eval_data_cpu_copy = None
 
-    def __init__(self, M, D, variant_param_space=None, device=0, means=None, covars=None, weights=None):
+    def __init__(self, M, D, variant_param_space=None, device_id=0, means=None, covars=None, weights=None):
         self.M = M
         self.D = D
         self.variant_param_space = variant_param_space or GMM.variant_param_default
@@ -145,11 +173,15 @@ class GMM(object):
         self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
 
-        self.device = device
-        self.get_gpu_util_mod().set_GPU_device(self.device)
-        self.capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device)
-        #TODO:Add more variant params based on GPU characteristics
-        self.variant_param_space['gpu_has_floating_point_atomics'] = ['0' if self.capability[0] < 2 else '1']
+        if GMM.device_id == None:
+            GMM.device_id = device_id
+            self.get_gpu_util_mod().set_GPU_device(device_id)
+        elif GMM.device_id != device_id:
+            #TODO: May actually be allowable if deallocate all GPU allocations first?
+            print "WARNING: As python only has one thread context, it can only use one GPU at a time, and you are attempting to run on a second GPU."
+        self.capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device_id)
+        #TODO: Figure out some kind of class inheiritance to deal with the complexity of functionality and perf params
+        self.device = DeviceCUDA10() if self.capability[0] < 2 else DeviceCUDA20()
 
     #Called the first time a GMM instance tries to use a GPU utility function
     def initialize_gpu_util_mod(self):
