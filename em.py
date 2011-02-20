@@ -254,28 +254,88 @@ class GMM(object):
         cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
         c_decl_tpl = AspTemplate.Template(filename="templates/gaussian_decl.mako") 
 
+        def determine_compilability_and_input_limits(param_dict):
+            for k, v in self.device.params.iteritems():
+                param_dict[k] = str(v)
+
+            tpb = int(self.device.params['max_threads_per_block'])
+            shmem = int(self.device.params['max_shared_memory_capacity_per_SM'])
+            vname = param_dict['covar_version_name']
+            eblocks = int(param_dict['num_blocks_estep'])
+            ethreads = int(param_dict['num_threads_estep'])
+            mthreads = int(param_dict['num_threads_mstep'])
+            blocking = int(param_dict['num_event_blocks'])
+            max_d = int(param_dict['max_num_dimensions'])
+            max_m = int(param_dict['max_num_components'])
+            max_arg_values = (max_m, max_d, 1000000) #TODO: get device mem size
+
+            compilable = False
+            comp_func = lambda name, *args, **kwargs: False
+
+            if ethreads <= tpb and mthreads <= tpb and (max_d*max_d+max_d)*4 < shmem and ethreads*4 < shmem and mthreads*4 < shmem: 
+                if vname.upper() == 'V1':
+                    if (max_d + mthreads)*4 < shmem:
+                        compilable = True
+                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)])
+                elif vname.upper() == 'V2A':
+                    if max_d*4 < shmem:
+                        compilable = True
+                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[0]*(args[0]+1)/2 < tpb
+                elif vname.upper() == 'V2B':
+                    if (max_d*max_d+max_d)*4 < shmem:
+                        compilable = True
+                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[0]*(args[0]+1)/2 < tpb
+                else:
+                    if (max_d*max_m + mthreads + max_m)*4 < shmem:
+                        compilable = True
+                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)])
+
+            return compilable, comp_func
+
         def render_and_add_to_module( param_dict ):
-            keys = param_dict.keys()
-            keys.sort()
-            vals = map(param_dict.get, keys) #gets vals based on alpha order of keys
+            # Evaluate whether these particular parameters can be compiled on this particular device
+            can_be_compiled, comparison_function_for_input_args = determine_compilability_and_input_limits(param_dict)
+
+            # Get vals based on alphabetical order of keys
+            param_names = param_dict.keys()
+            param_names.sort()
+            vals = map(param_dict.get, param_names)
+            # Use vals to render templates 
             c_train_rend  = c_train_tpl.render( param_val_list = vals, **param_dict)
             c_eval_rend  = c_eval_tpl.render( param_val_list = vals, **param_dict)
             cu_kern_rend = cu_kern_tpl.render( param_val_list = vals, **param_dict)
             c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
 
-            cuda_mod.add_to_module([Line(cu_kern_rend)])
-            GMM.asp_mod.add_to_preamble(c_decl_rend)
-            GMM.asp_mod.add_function_with_variants( [c_train_rend], 
-                                                    "train", 
-                                                    [ 'train_'+'_'.join(vals) ],
-                                                    lambda name, *args, **kwargs: (name, args[0], args[1], args[2]),
-                                                    keys
+            def var_name_generator(base):
+                return '_'.join([base]+vals)
+            def dummy_func_body_gen(base):
+                return "void "+var_name_generator(base)+"(int m, int d, int n, pyublas::numpy_array<float> data){}"
+
+            key_func = lambda name, *args, **kwargs: (name, args[0], args[1], args[2])
+            if can_be_compiled: 
+                GMM.asp_mod.add_to_preamble(c_decl_rend)
+                cuda_mod.add_to_module([Line(cu_kern_rend)])
+                train_body = c_train_rend
+                eval_body = c_eval_rend
+            else:
+                train_body = dummy_func_body_gen('train')
+                eval_body = dummy_func_body_gen('eval')
+
+            GMM.asp_mod.add_function_with_variants( [train_body],
+                                                    'train', 
+                                                    [var_name_generator('train')],
+                                                    key_func,
+                                                    [comparison_function_for_input_args],
+                                                    [can_be_compiled],
+                                                    param_names
                                                   )
-            GMM.asp_mod.add_function_with_variants( [c_eval_rend], 
-                                                    "eval", 
-                                                    [ 'eval_'+'_'.join(vals) ],
-                                                    lambda name, *args, **kwargs: (name, args[0], args[1], args[2]),
-                                                    keys
+            GMM.asp_mod.add_function_with_variants( [eval_body], 
+                                                    'eval', 
+                                                    [var_name_generator('eval')],
+                                                    key_func,
+                                                    [comparison_function_for_input_args],
+                                                    [can_be_compiled],
+                                                    param_names
                                                   )
 
         def generate_permutations ( key_arr, val_arr_arr, current, add_func):
@@ -284,7 +344,7 @@ class GMM(object):
             for v in val_arr_arr[idx]:
                 current[name]  = v
                 if idx == len(key_arr)-1:
-                    add_func(current)
+                    add_func(current.copy())
                 else:
                     generate_permutations(key_arr, val_arr_arr, current, add_func)
             del current[name]
