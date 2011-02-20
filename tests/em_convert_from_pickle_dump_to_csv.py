@@ -14,7 +14,11 @@ param_type_map = {
         'diag_only': 'binary',
         'max_iters': 'cardinal',
         'min_iters': 'cardinal',
-        'covar_version_name': 'nominal'
+        'covar_version_name': 'nominal',
+        'supports_32b_floating_point_atomics': 'machine nominal',
+        'max_xy_grid_dim': 'machine cardinal',
+        'max_threads_per_block': 'machine cardinal',
+        'max_shared_memory_capacity_per_SM': 'machine cardinal'
 }
 
 if __name__ == '__main__':  
@@ -29,10 +33,10 @@ if __name__ == '__main__':
         param_names = mod.compiled_methods_with_variants[func_name].param_names
         var_times = mod.compiled_methods_with_variants[func_name].variant_times
         f = file(ofile_name, 'a')
-        f.write("Heading, Function Name, Device Name, Input Params,,,Variant Params,,,,,,,,,,Time\n")
+        f.write("Heading, Function Name, Device Name, Input Params,,,Variant Params"+","*len(param_names)+"Time\n")
         f.write("Name,function,device,M,D,N,%s,Time\n" % ','.join(param_names))
         f.write("Type,nominal,nominal,cardinal,cardinal,cardinal,%s,real\n" % 
-                ','.join([param_type_map[n] for n in param_names]))
+                ','.join([param_type_map.get(n,'unknown') for n in param_names]))
         for size, times in var_times.items():
             for name, time in zip(var_names, times):
                 f.write(",%s,%s,%s,%s,%s\n" % ( func_name, 
