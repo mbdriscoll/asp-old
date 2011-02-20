@@ -278,9 +278,9 @@ estep2${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components,
     total_likelihoods[tid] = thread_likelihood;
     __syncthreads();
 
-    temp = parallelSum(total_likelihoods,${num_threads_estep});
+    parallelSum(total_likelihoods);
     if(tid == 0) {
-        likelihood[blockIdx.x] = temp;
+        likelihood[blockIdx.x] = total_likelihoods[0];
     }
 }
 
@@ -299,13 +299,10 @@ mstep_means${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* compon
         sum += fcs_data[d*num_events+event]*component_memberships[c*num_events+event];
     }
     temp_sum[tid] = sum;
-    
     __syncthreads();
     
+    parallelSum(temp_sum);
     if(tid == 0) {
-        for(int i=1; i < num_threads; i++) {
-            temp_sum[0] += temp_sum[i];
-        }
         components->means[c*num_dimensions+d] = temp_sum[0] / components->N[c];
     }
     
@@ -329,10 +326,8 @@ mstep_means_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, components
     
     __syncthreads();
     
+    parallelSum(temp_sum);
     if(tid == 0) {
-        for(int i=1; i < num_threads; i++) {
-            temp_sum[0] += temp_sum[i];
-        }
         components->means[c*num_dimensions+d] = temp_sum[0] / components->N[c];
     }
     
@@ -360,17 +355,10 @@ mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components
  
     __syncthreads();
     
-    // Let the first thread add up all the intermediate sums
-    // Could do a parallel reduction...doubt it's really worth it for so few elements though
+    parallelSum(temp_sums);
     if(tid == 0) {
-        components->N[c] = 0.0f;
-        for(int j=0; j<num_threads; j++) {
-            components->N[c] += temp_sums[j];
-        }
-        //printf("components[%d].N = %f\n",c,components[c].N);
-        
-        // Set PI to the # of expected items, and then normalize it later
-        components->pi[c] = components->N[c];
+        components->N[c] = temp_sums[0];
+        components->pi[c] = temp_sums[0];
     }
 }
    
@@ -403,11 +391,9 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
     __syncthreads();
     
+    parallelSum(temp_sums);
     if(tid == 0) {
-      cov_sum = 0.0f; 
-      for(int i=0; i < ${num_threads_mstep}; i++) {
-        cov_sum += temp_sums[i];
-      }
+      cov_sum = temp_sums[0];
       if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
         cov_sum /= components->N[c];
         components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
@@ -609,11 +595,9 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     
     __syncthreads();
       
+    parallelSum(temp_sums);
     if(tid == 0) {
-      component_sum[c] = 0.0f; 
-      for(int i=0; i < ${num_threads_mstep}; i++) {
-        component_sum[c] += temp_sums[i];
-      }
+      component_sum[c] = temp_sums[0]; 
     }
     __syncthreads();
   }
@@ -694,27 +678,19 @@ mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, compo
 
     __syncthreads();
     
+    parallelSum(temp_sums);
     if(tid == 0) {
-        cov_sum = 0.0f;
-        for(int i=0; i < ${num_threads_mstep}; i++) {
-            cov_sum += temp_sums[i];
-        }
-        if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+        cov_sum = temp_sums[0];
+        if(components->N[c] >= 1.0f) { 
             cov_sum /= components->N[c];
             components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
-            // Set the symmetric value
             matrix_index = col*num_dimensions+row;
             components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
         } else {
-            components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
-            // Set the symmetric value
+            components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; 
             matrix_index = col*num_dimensions+row;
-            components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
+            components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; 
         }
-
-        // Regularize matrix - adds some variance to the diagonal elements
-        // Helps keep covariance matrix non-singular (so it can be inverted)
-        // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
         if(row == col) {
             components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
         }

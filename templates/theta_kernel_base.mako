@@ -116,18 +116,22 @@ __device__ void normalize_pi(components_t* components, int num_components) {
     __syncthreads();
 }
 
-__device__ float parallelSum(float* data, const unsigned int ndata) {
+__device__ void parallelSum(float* data) {
   const unsigned int tid = threadIdx.x;
-  float t;
-
-  __syncthreads();
-
-  // Butterfly sum.  ndata MUST be a power of 2.
-  for(unsigned int bit = ndata >> 1; bit > 0; bit >>= 1) {
-    t = data[tid] + data[tid^bit];  __syncthreads();
-    data[tid] = t;                  __syncthreads();
+  for(unsigned int s=blockDim.x/2; s>32; s>>=1) {
+    if (tid < s)
+      data[tid] += data[tid + s];  
+    __syncthreads();
   }
-  return data[tid];
+  if (tid < 32) {
+    volatile float* sdata = data;
+    sdata[tid] += sdata[tid+32];
+    sdata[tid] += sdata[tid+16];
+    sdata[tid] += sdata[tid+8];
+    sdata[tid] += sdata[tid+4];
+    sdata[tid] += sdata[tid+2];
+    sdata[tid] += sdata[tid+1];
+  }
 }
 
 /*
