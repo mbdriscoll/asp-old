@@ -49,38 +49,39 @@ class EMTester(object):
 
     def test_speech_ahc(self):
         
-        #get the events, divide them into the k clusters
+        # Get the events, divide them into an initial k clusters and train each GMM on a cluster
         per_cluster = self.N/self.init_num_clusters
         init_training = zip(self.gmm_list,np.vsplit(self.X, range(per_cluster, self.N, per_cluster)))
-
-        #train each gmm on a cluster
         for g, x in init_training:
             g.train(x)
 
+        # Perform hierarchical agglomeration based on BIC scores
         best_BIC_score = 1.0
         while (best_BIC_score > 0 and len(self.gmm_list) > 1):
             print "Num GMMs: %d, last score: %d" % (len(self.gmm_list), best_BIC_score)
 
             num_clusters = len(self.gmm_list)
-            #    resegment data:
+            # Resegment data based on likelihood scoring
             likelihoods = self.gmm_list[0].score(self.X)
             for g in self.gmm_list[1:]:
                 likelihoods = np.column_stack((likelihoods, g.score(self.X)))
             most_likely = likelihoods.argmax(axis=1)
-
+            # Across 2.5 secs of observations, vote on which cluster they should be associated with
             iter_training = {}
             for i in range(250, self.N, 250):
                 votes = np.zeros(num_clusters)
                 for j in range(i-250, i):
                     votes[most_likely[j]] += 1
+                #print votes.argmax()
                 iter_training.setdefault(self.gmm_list[votes.argmax()],[]).append(self.X[i-250:i,:])
             votes = np.zeros(num_clusters)
             for j in range((self.N/250)*250, self.N):
                 votes[most_likely[j]] += 1
+            #print votes.argmax()
             iter_training[ self.gmm_list[votes.argmax()]].append(self.X[(self.N/250)*250:self.N,:])
 
-            self.gmm_list = filter(lambda x: x in iter_training.keys(), self.gmm_list)
-
+            # Retrain the GMMs on the clusters for which they were voted most likely and
+            # make a list of candidates for merging
             iter_bic_list = []
             for g, data_list in iter_training.iteritems():
                 cluster_data =  data_list[0]
@@ -89,7 +90,13 @@ class EMTester(object):
                 cluster_data = np.ascontiguousarray(cluster_data)
                 g.train(cluster_data)
                 iter_bic_list.append((g,cluster_data))
-            
+    
+            # Keep any GMMs that lost all votes in candidate list for merging
+            for g in self.gmm_list:
+                if g not in iter_training.keys():
+                    iter_bic_list.append((g,None))            
+
+            # Score all pairs of GMMs using BIC
             best_merged_gmm = None
             best_BIC_score = 0.0
             merged_tuple = None
@@ -97,23 +104,27 @@ class EMTester(object):
                 for gmm2idx in range(gmm1idx+1, len(iter_bic_list)):
                     g1, d1 = iter_bic_list[gmm1idx]
                     g2, d2 = iter_bic_list[gmm2idx] 
-                    combined_data = np.concatenate((d1, d2))
-                    new_gmm, score = compute_distance_BIC(g1, g2, combined_data)
-                    #print score
+                    score = 0.0
+                    if d1 is not None or d2 is not None:
+                        if d1 is not None and d2 is not None:
+                            new_gmm, score = compute_distance_BIC(g1, g2, np.concatenate((d1, d2)))
+                        elif d1 is not None:
+                            new_gmm, score = compute_distance_BIC(g1, g2, d1)
+                        else:
+                            new_gmm, score = compute_distance_BIC(g1, g2, d2)
+                    print "Comparing BIC %d with %d: %f" % (gmm1idx, gmm2idx, score)
                     if score > best_BIC_score: 
                         best_merged_gmm = new_gmm
                         merged_tuple = (g1, g2)
                         best_BIC_score = score
             
+            # Merge the winning candidate pair if its deriable to do so
             if best_BIC_score > 0.0:
                 self.gmm_list.remove(merged_tuple[0]) 
                 self.gmm_list.remove(merged_tuple[1]) 
                 self.gmm_list.append(best_merged_gmm)
 
-        print self.gmm_list
-        
-        if len(self.gmm_list) == 1: print self.gmm_list[0].components.means.reshape((self.gmm_list[0].M, self.D)), self.gmm_list[0].components.covars.reshape((self.gmm_list[0].M, self.D, self.D))
-
+        print "Final size of each cluster:", [ g.M for g in self.gmm_list]
 
     def test_cytosis_ahc(self):
         M_start = self.M
@@ -201,7 +212,7 @@ if __name__ == '__main__':
     }
     emt = EMTester(True, variant_param_space, device_id, num_subplots)
     #emt.new_gmm(6)
-    #t = timeit.Timer(emt.time_ahc)
+    #t = timeit.Timer(emt.time_cytosis_ahc)
     #print t.timeit(number=1)
     #emt.test_cytosis_ahc()
     #emt.plot()
