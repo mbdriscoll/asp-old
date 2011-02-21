@@ -29,11 +29,12 @@ class EMTester(object):
         self.device_id = device_id
         self.num_subplots = num_subps
         self.plot_id = num_subps*100 + 11
+        self.from_file = from_file
         
         if from_file:
             self.X = np.recfromcsv('IS1000a.csv', names=None, dtype=np.float32)
-            self.D = self.X.shape[0]
-            self.N = self.X.shape[1]
+            self.N = self.X.shape[0]
+            self.D = self.X.shape[1]
         else:
             self.D = 2
             self.N = 600
@@ -45,21 +46,24 @@ class EMTester(object):
 
     def test_pure_python(self):
         means, covars = self.gmm.train_using_python(self.X)
-        Y = self.gmm.predict_using_python(self.X)
-        self.results['Pure'] = (str(self.plot_id), means, covars, Y.T)
-        self.plot_id += 1
+        if not self.from_file:
+            Y = self.gmm.predict_using_python(self.X)
+            self.results['Pure'] = (str(self.plot_id), means, covars, Y.T)
+            self.plot_id += 1
 
     def test_sejits(self):        
         likelihood = self.gmm.train(self.X)
-        means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
-        covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
-        Y = self.gmm.predict(self.X)
-        if(self.plot_id % 10 <= self.num_subplots):
-            self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.D),str(self.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
-            self.plot_id += 1
+        if not self.from_file:
+            means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
+            covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
+            Y = self.gmm.predict(self.X)
+            if(self.plot_id % 10 <= self.num_subplots):
+                self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.D),str(self.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
+                self.plot_id += 1
         return likelihood
         
     def plot(self):
+        if self.from_file: return
         for t, r in self.results.iteritems():
             splot = pl.subplot(r[0], title=t)
             color_iter = itertools.cycle (['r', 'g', 'b', 'c'])
@@ -82,13 +86,13 @@ if __name__ == '__main__':
     variant_param_space = {
             'num_blocks_estep': ['16'],
             'num_threads_estep': ['512'],
-            'num_threads_mstep': ['256'],
+            'num_threads_mstep': ['512'],
             'num_event_blocks': ['128'],
-            'max_num_dimensions': ['50'],
-            'max_num_components': ['128'],
+            'max_num_dimensions': ['40'],
+            'max_num_components': ['82'],
             'diag_only': ['0'],
             'max_iters': ['10'],
-            'min_iters': ['1'],
+            'min_iters': ['10'],
             'covar_version_name': ['V1', 'V2A', 'V2B', 'V3']
     }
     emt = EMTester(False, variant_param_space, num_subplots, device_id)
