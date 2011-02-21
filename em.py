@@ -280,11 +280,11 @@ class GMM(object):
                 elif vname.upper() == 'V2A':
                     if max_d*4 < shmem:
                         compilable = True
-                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[0]*(args[0]+1)/2 < tpb
+                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[1]*(args[1]-1)/2 < tpb
                 elif vname.upper() == 'V2B':
                     if (max_d*max_d+max_d)*4 < shmem:
                         compilable = True
-                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[0]*(args[0]+1)/2 < tpb
+                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[1]*(args[1]-1)/2 < tpb
                 else:
                     if (max_d*max_m + mthreads + max_m)*4 < shmem:
                         compilable = True
