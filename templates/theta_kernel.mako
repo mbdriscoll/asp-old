@@ -443,33 +443,35 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
     float cov_sum = 0.0f; //my local sum for the matrix element, I (thread) sum up over all N events into this var
 
-
-    for(int event=0; event < num_events; event++) {
-      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
+    if(tid < num_dimensions*(num_dimensions+1)/2) {
+        for(int event=0; event < num_events; event++) {
+          cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
+        }
     }
 
     __syncthreads();
 
-    if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
-      cov_sum /= components->N[c];
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
-      // Set the symmetric value
-      matrix_index = col*num_dimensions+row;
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
-    } else {
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
-      // Set the symmetric value
-      matrix_index = col*num_dimensions+row;
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
-    }
-    
-    // Regularize matrix - adds some variance to the diagonal elements
-    // Helps keep covariance matrix non-singular (so it can be inverted)
-    // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
-    if(row == col) {
-      components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
-    }
-    
+    if(tid < num_dimensions*(num_dimensions+1)/2) {
+        if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+          cov_sum /= components->N[c];
+          components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+          // Set the symmetric value
+          matrix_index = col*num_dimensions+row;
+          components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
+        } else {
+          components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
+          // Set the symmetric value
+          matrix_index = col*num_dimensions+row;
+          components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty component...?
+        }
+        
+        // Regularize matrix - adds some variance to the diagonal elements
+        // Helps keep covariance matrix non-singular (so it can be inverted)
+        // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
+        if(row == col) {
+          components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
+        }
+    }   
 }
 
 void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
@@ -510,26 +512,28 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
     float cov_sum = 0.0f; //my local sum for the matrix element, I (thread) sum up over all N events into this var
 
-    for(int event=e_start; event < e_end; event++) {
-      cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
-    }
+    if(tid < num_dimensions*(num_dimensions+1)/2) {
+        for(int event=e_start; event < e_end; event++) {
+          cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
+        }
 
-    myR[matrix_index] = cov_sum;
+        myR[matrix_index] = cov_sum;
      
 #if ${supports_32b_floating_point_atomics}
-    float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
+        float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
 #else
-    float log_temp = log(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
-    float log_myR = log(myR[matrix_index]);
-    int fixp_temp = floor(log_temp*1000000);
-    int fixp_myR = floor(log_myR*1000000);
-    int fixp_old = atomicAdd(&fixp_temp, fixp_myR);
-    float old = exp((float)fixp_old/1000000);
+        float log_temp = log(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
+        float log_myR = log(myR[matrix_index]);
+        int fixp_temp = floor(log_temp*1000000);
+        int fixp_myR = floor(log_myR*1000000);
+        int fixp_old = atomicAdd(&fixp_temp, fixp_myR);
+        float old = exp((float)fixp_old/1000000);
 #endif
+    }
 
     __syncthreads();
 
-    //if(blockIdx.y == 0) {
+    if(tid < num_dimensions*(num_dimensions+1)/2) {
       if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
         cs /= components->N[c];
@@ -550,7 +554,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
       if(row == col) {
         components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
       }
-      //}
+    }
 }
  
 void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
