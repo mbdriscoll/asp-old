@@ -5,20 +5,20 @@ import pickle
 import sys
 
 param_type_map = {
-        'num_blocks_estep': 'cardinal',
-        'num_threads_estep': 'cardinal',
-        'num_threads_mstep': 'cardinal',
-        'num_event_blocks': 'cardinal',
-        'max_num_dimensions': 'cardinal',
-        'max_num_components': 'cardinal',
-        'diag_only': 'binary',
-        'max_iters': 'cardinal',
-        'min_iters': 'cardinal',
-        'covar_version_name': 'nominal',
-        'supports_32b_floating_point_atomics': 'machine nominal',
-        'max_xy_grid_dim': 'machine cardinal',
-        'max_threads_per_block': 'machine cardinal',
-        'max_shared_memory_capacity_per_SM': 'machine cardinal'
+        'num_blocks_estep': ('cardinal','variant'),
+        'num_threads_estep': ('cardinal','variant'),
+        'num_threads_mstep': ('cardinal','variant'),
+        'num_event_blocks': ('cardinal','variant'),
+        'max_num_dimensions': ('cardinal','variant'),
+        'max_num_components': ('cardinal','variant'),
+        'diag_only': ('binary','variant'),
+        'max_iters': ('cardinal','variant'),
+        'min_iters': ('cardinal','variant'),
+        'covar_version_name': ('nominal','variant'),
+        'supports_32b_floating_point_atomics': ('nominal','machine'),
+        'max_xy_grid_dim': ('cardinal','machine'),
+        'max_threads_per_block': ('cardinal','machine'),
+        'max_shared_memory_capacity_per_SM': ('cardinal','machine')
 }
 
 if __name__ == '__main__':  
@@ -36,7 +36,9 @@ if __name__ == '__main__':
         f.write("Heading, Function Name, Device Name, Input Params,,,Variant Params"+","*len(param_names)+"Time\n")
         f.write("Name,function,device,M,D,N,%s,Time\n" % ','.join(param_names))
         f.write("Type,nominal,nominal,cardinal,cardinal,cardinal,%s,real\n" % 
-                ','.join([param_type_map.get(n,'unknown') for n in param_names]))
+                ','.join([param_type_map.get(n,'unknown')[0] for n in param_names]))
+        f.write("Prefix,problem,machine,problem,problem,problem,%s,performance\n" % 
+                ','.join([param_type_map.get(n,'unknown')[1] for n in param_names]))
         for size, times in var_times.items():
             for name, time in zip(var_names, times):
                 f.write(",%s,%s,%s,%s,%s\n" % ( func_name, 
@@ -46,5 +48,3 @@ if __name__ == '__main__':
                                                 time ) )
         f.close()
 
-# function,, device,, inputs,, [names from param_names],, time
-#  name,, device,, D, M, N,, [params from var name], time
