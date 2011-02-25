@@ -581,14 +581,14 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
   int matrix_index;
     
   // Store ALL the means in shared memory
-  __shared__ float means[${max_num_components}*${max_num_dimensions}];
+  __shared__ float means[${max_num_components_covar_v3}*${max_num_dimensions_covar_v3}];
   for(int i = tid; i<num_components*num_dimensions; i+=${num_threads_mstep}) {
     means[i] = components->means[i];
   }
   __syncthreads();
 
   __shared__ float temp_sums[${num_threads_mstep}];
-  __shared__ float component_sum[${max_num_components}]; //local storage for component results
+  __shared__ float component_sum[${max_num_components_covar_v3}]; //local storage for component results
   
   for(int c = 0; c<num_components; c++) {
     float cov_sum = 0.0f;

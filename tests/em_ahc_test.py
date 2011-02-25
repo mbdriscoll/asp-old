@@ -205,6 +205,8 @@ if __name__ == '__main__':
             'num_event_blocks': ['128'],
             'max_num_dimensions': ['50'],
             'max_num_components': ['128'],
+            'max_num_dimensions_covar_v3': ['40'],
+            'max_num_components_covar_v3': ['82'],
             'diag_only': ['0'],
             'max_iters': ['10'],
             'min_iters': ['1'],

@@ -22,7 +22,8 @@ class DeviceCUDA10(DeviceParameters):
         self.params['max_xy_grid_dim'] = 65535
         self.params['max_threads_per_block'] = 512
         self.params['max_shared_memory_capacity_per_SM'] = 16348
-        #TODO: Processor-implementation-specific parameters that impact performance, e.g. the number of SMs
+        # Device parameters
+        self.params['max_gpu_memory_capacity'] = 1073741824
 
 class DeviceCUDA20(DeviceParameters):
     def __init__(self):
@@ -33,7 +34,8 @@ class DeviceCUDA20(DeviceParameters):
         self.params['max_xy_grid_dim'] = 65535
         self.params['max_threads_per_block'] = 1024
         self.params['max_shared_memory_capacity_per_SM'] = 16384*3
-        #TODO: Processor-implementation-specific parameters that impact performance, e.g. the number of SMs
+        # Device parameters
+        self.params['max_gpu_memory_capacity'] = 1610612736
 
 
 #TODO: Change to GMMComponents
@@ -93,8 +95,10 @@ class GMM(object):
             'num_threads_estep': ['512'],
             'num_threads_mstep': ['256'],
             'num_event_blocks': ['128'],
-            'max_num_dimensions': ['41'],
-            'max_num_components': ['81'],
+            'max_num_dimensions': ['50'],
+            'max_num_components': ['122'],
+            'max_num_dimensions_covar_v3': ['41'],
+            'max_num_components_covar_v3': ['81'],
             'diag_only': ['0'],
             'max_iters': ['10'],
             'min_iters': ['1'],
@@ -260,14 +264,18 @@ class GMM(object):
 
             tpb = int(self.device.params['max_threads_per_block'])
             shmem = int(self.device.params['max_shared_memory_capacity_per_SM'])
+            gpumem = int(self.device.params['max_gpu_memory_capacity'])
             vname = param_dict['covar_version_name']
             eblocks = int(param_dict['num_blocks_estep'])
             ethreads = int(param_dict['num_threads_estep'])
             mthreads = int(param_dict['num_threads_mstep'])
             blocking = int(param_dict['num_event_blocks'])
             max_d = int(param_dict['max_num_dimensions'])
+            max_d_v3 = int(param_dict['max_num_dimensions_covar_v3'])
             max_m = int(param_dict['max_num_components'])
-            max_arg_values = (max_m, max_d, 1000000) #TODO: get device mem size
+            max_m_v3 = int(param_dict['max_num_components_covar_v3'])
+            max_n = gpumem / (max_d*4)
+            max_arg_values = (max_m, max_d, max_n) #TODO: get device mem size
 
             compilable = False
             comp_func = lambda name, *args, **kwargs: False
@@ -286,9 +294,9 @@ class GMM(object):
                         compilable = True
                         comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[1]*(args[1]-1)/2 < tpb
                 else:
-                    if (max_d*max_m + mthreads + max_m)*4 < shmem:
+                    if (max_d_v3*max_m_v3 + mthreads + max_m_v3)*4 < shmem:
                         compilable = True
-                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)])
+                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, (max_m_v3, max_d_v3, max_n))])
 
             return compilable, comp_func
 

@@ -11,6 +11,8 @@ param_type_map = {
         'num_event_blocks': ('cardinal','variant'),
         'max_num_dimensions': ('cardinal','variant'),
         'max_num_components': ('cardinal','variant'),
+        'max_num_dimensions_covar_v3': ('cardinal','variant'),
+        'max_num_components_covar_v3': ('cardinal','variant'),
         'diag_only': ('binary','variant'),
         'max_iters': ('cardinal','variant'),
         'min_iters': ('cardinal','variant'),
