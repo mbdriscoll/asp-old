@@ -32,7 +32,7 @@ class EMTester(object):
         self.from_file = from_file
         
         if from_file:
-            self.X = np.recfromcsv('IS1000a.csv', names=None, dtype=np.float32)
+            self.X = np.ndfromtxt('IS1000a.csv', delimiter=',', dtype=np.float32)
             self.N = self.X.shape[0]
             self.D = self.X.shape[1]
         else:

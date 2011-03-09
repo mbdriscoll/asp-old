@@ -29,7 +29,7 @@ class EMTester(object):
         self.num_subplots = num_subps
         self.plot_id = num_subps/2*100 + 21
         if from_file:
-            self.X = np.recfromcsv('IS1000a.csv', names=True, dtype=np.float32)
+            self.X = np.ndfromtxt('IS1000a.csv', delimiter=',', dtype=np.float32)
             self.N = self.X.shape[0]
             self.D = self.X.shape[1]
         else:
@@ -78,7 +78,7 @@ class EMTester(object):
             for j in range((self.N/250)*250, self.N):
                 votes[most_likely[j]] += 1
             #print votes.argmax()
-            iter_training[ self.gmm_list[votes.argmax()]].append(self.X[(self.N/250)*250:self.N,:])
+            iter_training.setdefault(self.gmm_list[votes.argmax()],[]).append(self.X[(self.N/250)*250:self.N,:])
 
             # Retrain the GMMs on the clusters for which they were voted most likely and
             # make a list of candidates for merging
@@ -136,26 +136,26 @@ class EMTester(object):
             print "======================== AHC loop: M = ", M+1, " ==========================="
             self.gmm.train(self.X)
     
-        #plotting
-        means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
-        covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
-        Y = self.gmm.predict(self.X)
-        if(self.plot_id % 10 <= self.num_subplots):
-            self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.gmm.D),str(self.gmm.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
-            self.plot_id += 1
+            #plotting
+            means = self.gmm.components.means.reshape((self.gmm.M, self.gmm.D))
+            covars = self.gmm.components.covars.reshape((self.gmm.M, self.gmm.D, self.gmm.D))
+            Y = self.gmm.predict(self.X)
+            if(self.plot_id % 10 <= self.num_subplots):
+                self.results['_'.join(['ASP v',str(self.plot_id-(100*self.num_subplots+11)),'@',str(self.gmm.D),str(self.gmm.M),str(self.N)])] = (str(self.plot_id), copy.deepcopy(means), copy.deepcopy(covars), copy.deepcopy(Y))
+                self.plot_id += 1
 
-        #find closest components and merge
-        if M > 0: #don't merge if there is only one component
-            gmm_list = []
-            for c1 in range(0, self.gmm.M):
-                for c2 in range(c1+1, self.gmm.M):
-                    new_component, dist = self.gmm.compute_distance_rissanen(c1, c2)
-                    gmm_list.append((dist, (c1, c2, new_component)))
-                    #print "gmm_list after append: ", gmm_list
-                    
-            #compute minimum distance
-            min_c1, min_c2, min_component = min(gmm_list, key=lambda gmm: gmm[0])[1]
-            self.gmm.merge_components(min_c1, min_c2, min_component)
+	    #find closest components and merge
+	    if M > 0: #don't merge if there is only one component
+	        gmm_list = []
+	        for c1 in range(0, self.gmm.M):
+		    for c2 in range(c1+1, self.gmm.M):
+		        new_component, dist = self.gmm.compute_distance_rissanen(c1, c2)
+		        gmm_list.append((dist, (c1, c2, new_component)))
+		        #print "gmm_list after append: ", gmm_list
+		    
+	        #compute minimum distance
+	        min_c1, min_c2, min_component = min(gmm_list, key=lambda gmm: gmm[0])[1]
+	        self.gmm.merge_components(min_c1, min_c2, min_component)
 
     def time_cytosis_ahc(self):
         M_start = self.M
