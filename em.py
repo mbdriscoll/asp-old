@@ -387,12 +387,16 @@ class GMM(object):
         
         #print GMM.asp_mod.module.generate()
         GMM.asp_mod.compile()
+	GMM.asp_mod.restore_func_variant_timings('train')
+	GMM.asp_mod.restore_func_variant_timings('eval')
         return GMM.asp_mod
 
     def __del__(self):
         self.internal_free_event_data()
         self.internal_free_component_data()
         self.internal_free_eval_data()
+	GMM.asp_mod.save_func_variant_timings('train')
+	GMM.asp_mod.save_func_variant_timings('eval')
     
     def train_using_python(self, input_data):
         from scikits.learn import mixture
