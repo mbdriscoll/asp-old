@@ -446,9 +446,9 @@ class GMM(object):
         logprob, posteriors = self.eval(obs_data)
         return posteriors.argmax(axis=0) # N indexes of most likely components
 
-    def merge_components(self, min_c1, min_c2, min_component):
+    def merge_components(self, c1, c2, new_component):
         self.get_asp_mod().dealloc_temp_components_on_CPU()
-        self.get_asp_mod().merge_components(min_c1, min_c2, min_component, self.M, self.D)
+        self.get_asp_mod().merge_components(c1, c2, new_component, self.M, self.D)
         self.M -= 1
         self.components.shrink_components(self.M)
         self.get_asp_mod().relink_components_on_CPU(self.components.weights, self.components.means, self.components.covars)
