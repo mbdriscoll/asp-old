@@ -278,25 +278,25 @@ class GMM(object):
             max_arg_values = (max_m, max_d, max_n) #TODO: get device mem size
 
             compilable = False
-            comp_func = lambda name, *args, **kwargs: False
+            comp_func = lambda *args, **kwargs: False
 
             if ethreads <= tpb and mthreads <= tpb and (max_d*max_d+max_d)*4 < shmem and ethreads*4 < shmem and mthreads*4 < shmem: 
                 if vname.upper() == 'V1':
                     if (max_d + mthreads)*4 < shmem:
                         compilable = True
-                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)])
+                        comp_func = lambda *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)])
                 elif vname.upper() == 'V2A':
                     if max_d*4 < shmem:
                         compilable = True
-                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[1]*(args[1]-1)/2 < tpb
+                        comp_func = lambda *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[1]*(args[1]-1)/2 < tpb
                 elif vname.upper() == 'V2B':
                     if (max_d*max_d+max_d)*4 < shmem:
                         compilable = True
-                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[1]*(args[1]-1)/2 < tpb
+                        comp_func = lambda *args, **kwargs: all([(a <= b) for a,b in zip(args, max_arg_values)]) and args[1]*(args[1]-1)/2 < tpb
                 else:
                     if (max_d_v3*max_m_v3 + mthreads + max_m_v3)*4 < shmem:
                         compilable = True
-                        comp_func = lambda name, *args, **kwargs: all([(a <= b) for a,b in zip(args, (max_m_v3, max_d_v3, max_n))])
+                        comp_func = lambda *args, **kwargs: all([(a <= b) for a,b in zip(args, (max_m_v3, max_d_v3, max_n))])
 
             return compilable, comp_func
 
@@ -362,7 +362,7 @@ class GMM(object):
         #Add Boost interface links for helper functions whose bodies are already contained in gaussian.mako
         names_of_helper_funcs = ["alloc_events_on_CPU", "alloc_events_on_GPU", "alloc_components_on_CPU", "alloc_components_on_GPU", "alloc_evals_on_CPU", "alloc_evals_on_GPU", "copy_event_data_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_data_GPU_to_CPU", "dealloc_events_on_CPU", "dealloc_events_on_GPU", "dealloc_components_on_CPU", "dealloc_components_on_GPU", "dealloc_temp_components_on_CPU", "dealloc_evals_on_CPU", "dealloc_evals_on_GPU", "get_temp_component_pi", "get_temp_component_means", "get_temp_component_covars", "relink_components_on_CPU", "compute_distance_rissanen", "merge_components" ]
         for fname in names_of_helper_funcs:
-            GMM.asp_mod.add_function("", fname)
+            GMM.asp_mod.add_helper_function(fname)
 
         #Add Boost interface links for components and distance objects
         GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
@@ -387,16 +387,16 @@ class GMM(object):
         
         #print GMM.asp_mod.module.generate()
         GMM.asp_mod.compile()
-	GMM.asp_mod.restore_func_variant_timings('train')
-	GMM.asp_mod.restore_func_variant_timings('eval')
+	GMM.asp_mod.restore_method_timings('train')
+	GMM.asp_mod.restore_method_timings('eval')
         return GMM.asp_mod
 
     def __del__(self):
         self.internal_free_event_data()
         self.internal_free_component_data()
         self.internal_free_eval_data()
-	GMM.asp_mod.save_func_variant_timings('train')
-	GMM.asp_mod.save_func_variant_timings('eval')
+	GMM.asp_mod.save_method_timings('train')
+	GMM.asp_mod.save_method_timings('eval')
     
     def train_using_python(self, input_data):
         from scikits.learn import mixture
