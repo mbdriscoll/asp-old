@@ -30,10 +30,10 @@ if __name__ == '__main__':
         device_id = sys.argv[4]
         gmm = GMM(1,1)
         mod = gmm.get_asp_mod()
-        mod.restore_func_variant_timings(func_name,ifile_name)
-        var_names = mod.compiled_methods_with_variants[func_name].variant_names
-        param_names = mod.compiled_methods_with_variants[func_name].param_names
-        var_times = mod.compiled_methods_with_variants[func_name].variant_times
+        mod.restore_method_timings(func_name,ifile_name)
+        var_names = mod.compiled_methods[func_name].v_id_list
+        param_names = mod.compiled_methods[func_name].param_names
+        var_times = mod.compiled_methods[func_name].database.variant_times
         f = file(ofile_name, 'a')
         f.write("Heading, Function Name, Device Name, Input Params,,,Variant Params"+","*len(param_names)+"Time\n")
         f.write("Name,function,device,M,D,N,%s,Time\n" % ','.join(param_names))
@@ -42,7 +42,8 @@ if __name__ == '__main__':
         f.write("Prefix,problem,machine,problem,problem,problem,%s,performance\n" % 
                 ','.join([param_type_map.get(n,'unknown')[1] for n in param_names]))
         for size, times in var_times.items():
-            for name, time in zip(var_names, times):
+            for name in var_names:
+                time = times[name]
                 f.write(",%s,%s,%s,%s,%s\n" % ( func_name, 
                                                 device_id,  
                                                 ','.join([str(p) for p in size[1:]]),
