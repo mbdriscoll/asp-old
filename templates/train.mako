@@ -1,3 +1,6 @@
+<%
+tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0' else 'float'
+%>
 
 float train${'_'+'_'.join(param_val_list)} (
                              int num_components, 
@@ -11,15 +14,15 @@ float train${'_'+'_'.join(param_val_list)} (
   scratch_component_arr = (components_t**)malloc(sizeof(components_t*)*num_components*num_components);
   
   // ================= Temp buffer for codevar 2b ================ 
-  float *temp_buffer_2b = NULL;
+  ${tempbuff_type_name} *temp_buffer_2b = NULL;
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
     //scratch space to clear out components->R
-    float *zeroR_2b = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*num_components);
+    ${tempbuff_type_name} *zeroR_2b = (${tempbuff_type_name}*) malloc(sizeof(${tempbuff_type_name})*num_dimensions*num_dimensions*num_components);
     for(int i = 0; i<num_dimensions*num_dimensions*num_components; i++) {
-        zeroR_2b[i] = 0.0f;
+        zeroR_2b[i] = 0;
     }
-    CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_buffer_2b),sizeof(float)*num_dimensions*num_dimensions*num_components));
-    CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
+    CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_buffer_2b),sizeof(${tempbuff_type_name})*num_dimensions*num_dimensions*num_components));
+    CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(${tempbuff_type_name})*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
 %endif
   //=============================================================== 
     
@@ -81,7 +84,7 @@ float train${'_'+'_'.join(param_val_list)} (
     cudaThreadSynchronize();
             
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
-      CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(float)*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
+      CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(${tempbuff_type_name})*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
 %endif
 
     // Covariance is symmetric, so we only need to compute N*(N+1)/2 matrix elements per component

@@ -1,3 +1,6 @@
+<%
+tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0' else 'float'
+%>
 
 __device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar) {
     // access thread id
@@ -410,7 +413,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     }
 }
 
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, ${tempbuff_type_name}* temp_buffer_2b)
 {
   dim3 gridDim2(num_components,num_dimensions*(num_dimensions+1)/2);
   mstep_covariance${'_'+'_'.join(param_val_list)}<<<gridDim2, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events);
@@ -474,7 +477,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     }   
 }
 
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, ${tempbuff_type_name}* temp_buffer_2b)
 {
   int num_threads = num_dimensions*(num_dimensions+1)/2;
   mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_components, num_threads>>>(d_fcs_data_by_event,d_components,d_component_memberships,num_dimensions,num_components,num_events);
@@ -487,8 +490,7 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
  * B is the number of event blocks (N/events_per_block)
  */
 __global__ void
-mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events, int event_block_size, int num_b, float *temp_buffer) {
-
+mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events, int event_block_size, int num_b, ${tempbuff_type_name}* temp_buffer) {
   int tid = threadIdx.x; // easier variable name for our thread ID
     
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -519,23 +521,23 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
         myR[matrix_index] = cov_sum;
      
-#if ${supports_32b_floating_point_atomics}
+%if supports_32b_floating_point_atomics != '0':
         float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
-#else
-        float log_temp = log(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
-        float log_myR = log(myR[matrix_index]);
-        int fixp_temp = floor(log_temp*1000000);
-        int fixp_myR = floor(log_myR*1000000);
-        int fixp_old = atomicAdd(&fixp_temp, fixp_myR);
-        float old = exp((float)fixp_old/1000000);
-#endif
+%else:
+        unsigned int fixp_myR = (unsigned int)floor((myR[matrix_index])*1000000.0f);
+        unsigned int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), fixp_myR); 
+%endif
     }
 
     __syncthreads();
 
     if(tid < num_dimensions*(num_dimensions+1)/2) {
       if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+%if supports_32b_floating_point_atomics != '0':
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
+%else:
+        float cs = (((float)temp_buffer[c*num_dimensions*num_dimensions+matrix_index])/1000000.0f);
+%endif
         cs /= components->N[c];
         components->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
         // Set the symmetric value
@@ -557,7 +559,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     }
 }
  
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, ${tempbuff_type_name}* temp_buffer_2b)
 {
   int num_event_blocks = ${num_event_blocks};
   int event_block_size = num_events%${num_event_blocks} == 0 ? num_events/${num_event_blocks}:num_events/(${num_event_blocks}-1);
@@ -625,7 +627,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
   } 
 }
 
-void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, float* temp_buffer_2b)
+void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, ${tempbuff_type_name}* temp_buffer_2b)
 {
   int num_blocks = num_dimensions*(num_dimensions+1)/2;
   mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_blocks, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events);
