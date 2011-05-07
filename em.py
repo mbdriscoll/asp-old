@@ -333,6 +333,7 @@ class GMM(object):
                                                     'train', 
                                                     [var_name_generator('train')],
                                                     key_func,
+                                                    lambda results, time: float(time)/float(results[1]),
                                                     [comparison_function_for_input_args],
                                                     [can_be_compiled],
                                                     param_names
@@ -341,6 +342,7 @@ class GMM(object):
                                                     'eval', 
                                                     [var_name_generator('eval')],
                                                     key_func,
+                                                    lambda results, time: time,
                                                     [comparison_function_for_input_args],
                                                     [can_be_compiled],
                                                     param_names
@@ -423,7 +425,7 @@ class GMM(object):
         self.internal_alloc_event_data(input_data)
         self.internal_alloc_eval_data(input_data)
         self.internal_alloc_component_data()
-        self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, N, input_data)
+        self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, N, input_data)[0]
         return self
 
     def eval(self, obs_data):

@@ -2,7 +2,7 @@
 tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0' else 'float'
 %>
 
-float train${'_'+'_'.join(param_val_list)} (
+boost::python::tuple train${'_'+'_'.join(param_val_list)} (
                              int num_components, 
                              int num_dimensions, 
                              int num_events, 
@@ -131,6 +131,6 @@ float train${'_'+'_'.join(param_val_list)} (
   CUDA_SAFE_CALL(cudaFree(temp_buffer_2b));
 %endif
 
-  return likelihood;
+  return boost::python::make_tuple(likelihood, iters);
 }
 
