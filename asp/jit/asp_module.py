@@ -82,13 +82,13 @@ class ASPModule(object):
             module.add_function(func)
         self.dirty = True
 
-    def add_function_with_variants(self, variant_funcs, func_name, variant_names, key_maker=lambda name, *args, **kwargs: (name), limit_funcs=None, compilable=None, param_names=None, cuda_func=False):
+    def add_function_with_variants(self, variant_funcs, func_name, variant_names, key_maker=lambda name, *args, **kwargs: (name), normalizer=lambda results, time: time, limit_funcs=None, compilable=None, param_names=None, cuda_func=False):
         limit_funcs = limit_funcs or [lambda name, *args, **kwargs: True]*len(variant_names) 
         compilable = compilable or [True]*len(variant_names)
         param_names = param_names or ['Unknown']*len(variant_names)
         method_info = self.compiled_methods.get(func_name, None)
         if not method_info:
-            method_info = CodeVariants(variant_names, key_maker, param_names)
+            method_info = CodeVariants(variant_names, key_maker, normalizer, param_names)
             method_info.limiter.append(variant_names, limit_funcs, compilable)
         else:
             method_info.append(variant_names)
@@ -133,10 +133,11 @@ class ASPModule(object):
             v_id = method_info.selector.get_v_id_to_run(method_info.v_id_set, key,*args,**kwargs)
             real_func = self.compiled_module.__getattribute__(v_id) if v_id else error_func
             start_time = time.time() 
-            result = real_func(*args, **kwargs)
+            results = real_func(*args, **kwargs)
             elapsed = time.time() - start_time
+            value_to_put_in_database = method_info.normalize_performance(results, elapsed)
             method_info.database.add_time( key, elapsed, v_id, method_info.v_id_set)
-            return result
+            return results
         return special
 
     def helper_func(self, name):

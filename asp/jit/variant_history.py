@@ -100,10 +100,11 @@ class CodeVariantSelector(object):
         pass
 
 class CodeVariants(object):
-    def __init__(self, variant_names, key_func, param_names):
+    def __init__(self, variant_names, key_func, normalizing_func, param_names):
         self.v_id_list = variant_names
         self.v_id_set = set(variant_names)
         self.make_key = key_func     
+        self.normalize_performance = normalizing_func
         self.param_names = param_names
         self.database = CodeVariantPerformanceDatabase()
         self.limiter = CodeVariantUseCaseLimiter()
