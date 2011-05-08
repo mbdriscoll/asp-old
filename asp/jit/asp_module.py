@@ -136,7 +136,7 @@ class ASPModule(object):
             results = real_func(*args, **kwargs)
             elapsed = time.time() - start_time
             value_to_put_in_database = method_info.normalize_performance(results, elapsed)
-            method_info.database.add_time( key, elapsed, v_id, method_info.v_id_set)
+            method_info.database.add_time( key, value_to_put_in_database, v_id, method_info.v_id_set)
             return results
         return special
 
