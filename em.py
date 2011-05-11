@@ -90,7 +90,7 @@ class GMM(object):
     device_id = None
 
     #Default parameter space for code variants
-    variant_param_default = {
+    cuda_variant_param_default = {
             'num_blocks_estep': ['16'],
             'num_threads_estep': ['512'],
             'num_threads_mstep': ['256'],
@@ -169,10 +169,10 @@ class GMM(object):
             self.get_asp_mod().dealloc_evals_on_CPU()
             GMM.eval_data_cpu_copy = None
 
-    def __init__(self, M, D, variant_param_space=None, device_id=0, means=None, covars=None, weights=None):
+    def __init__(self, M, D, cuda_variant_param_space=None, device_id=0, means=None, covars=None, weights=None):
         self.M = M
         self.D = D
-        self.variant_param_space = variant_param_space or GMM.variant_param_default
+        self.cuda_variant_param_space = cuda_variant_param_space or GMM.cuda_variant_param_default
         self.components = Components(M, D, weights, means, covars)
         self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
@@ -190,6 +190,13 @@ class GMM(object):
     #Called the first time a GMM instance tries to use a GPU utility function
     def initialize_gpu_util_mod(self):
         GMM.gpu_util_mod = asp_module.ASPModule(use_cuda=True)
+        GMM.gpu_util_mod.modules['cuda_boost'].codepy_toolchain.cc = 'gcc'
+        GMM.gpu_util_mod.modules['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.gpu_util_mod.modules['cuda'].codepy_toolchain.cc = 'gcc'
+        GMM.gpu_util_mod.modules['cuda'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.gpu_util_mod.modules['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC"])
+        GMM.gpu_util_mod.modules['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
+
         #TODO: Figure out what kind of file to put this in
         #TODO: Or, redo these using more robust functionality stolen from PyCuda
         util_funcs = [ ("""
@@ -211,10 +218,11 @@ class GMM(object):
             }
             """, "get_GPU_device_capability_as_tuple")]
         for fbody, fname in util_funcs:
-            GMM.gpu_util_mod.add_function(fbody, fname)
+            GMM.gpu_util_mod.add_function(fbody, fname, module_name='cuda_boost')
         host_project_header_names = [ 'cuda_runtime.h'] 
-        for x in host_project_header_names: GMM.gpu_util_mod.add_to_preamble([Include(x, False)])
-        GMM.gpu_util_mod.compile()
+        for x in host_project_header_names: GMM.gpu_util_mod.add_to_preamble([Include(x, False)], 'cuda_boost')
+        GMM.gpu_util_mod.compile_module('cuda')
+        #GMM.gpu_util_mod.compile_module('cuda_boost')
         return GMM.gpu_util_mod
 
     #Called the first time a GMM instance tries to use a specialized function
@@ -222,8 +230,31 @@ class GMM(object):
 
         # Create ASP module
         GMM.asp_mod = asp_module.ASPModule(use_cuda=True)
-        cuda_mod = GMM.asp_mod.cuda_module
 
+        self.insert_non_rendered_code_into_cuda_module(GMM.asp_mod.modules['cuda'])
+        self.insert_rendered_code_into_cuda_module(GMM.asp_mod.modules['cuda'])
+
+        # Setup toolchain and compile
+
+	from codepy.libraries import add_pyublas, add_numpy
+        for mod in GMM.asp_mod.modules.itervalues():
+            mod.codepy_toolchain.add_library("project",['.','./include'],[],[])
+            add_pyublas(mod.codepy_toolchain)
+            add_numpy(mod.codepy_toolchain)
+
+        GMM.asp_mod.modules['cuda'].codepy_toolchain.cc = 'gcc'
+        GMM.asp_mod.modules['cuda'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.asp_mod.modules['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC","-arch=sm_%s%s" % self.capability ])
+        GMM.asp_mod.modules['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
+        
+        #print GMM.asp_mod.modules['cuda'].codepy_module.boost_module.generate()
+        GMM.asp_mod.compile_all()
+	GMM.asp_mod.restore_method_timings('train')
+	GMM.asp_mod.restore_method_timings('eval')
+        return GMM.asp_mod
+
+
+    def insert_non_rendered_code_into_cuda_module(self, cuda_module):
         #Add decls to preamble necessary for linking to compiled CUDA sources
         component_t_decl =""" 
             typedef struct components_struct {
@@ -235,22 +266,38 @@ class GMM(object):
                 float* R;      // Covariance matrix: [M*D*D]
                 float* Rinv;   // Inverse of covariance matrix: [M*D*D]
             } components_t;"""
-        GMM.asp_mod.add_to_preamble(component_t_decl)
-        cuda_mod.add_to_preamble([Line(component_t_decl)])
+        GMM.asp_mod.add_to_preamble(component_t_decl,'cuda_boost')
+        GMM.asp_mod.add_to_preamble(component_t_decl,'cuda')
 
         #Add necessary headers
         host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h', 'pyublas/numpy.hpp', 'cuda_runtime.h']
-        for x in host_system_header_names: GMM.asp_mod.add_to_preamble([Include(x, True)])
+        for x in host_system_header_names: 
+            GMM.asp_mod.add_to_preamble([Include(x, True)],'cuda_boost')
 
+        #Add Boost interface links for helper functions whose bodies are already contained in gaussian.mako
+        names_of_helper_funcs = ["alloc_events_on_CPU", "alloc_events_on_GPU", "alloc_components_on_CPU", "alloc_components_on_GPU", "alloc_evals_on_CPU", "alloc_evals_on_GPU", "copy_event_data_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_data_GPU_to_CPU", "dealloc_events_on_CPU", "dealloc_events_on_GPU", "dealloc_components_on_CPU", "dealloc_components_on_GPU", "dealloc_temp_components_on_CPU", "dealloc_evals_on_CPU", "dealloc_evals_on_GPU", "get_temp_component_pi", "get_temp_component_means", "get_temp_component_covars", "relink_components_on_CPU", "compute_distance_rissanen", "merge_components" ]
+        for fname in names_of_helper_funcs:
+            GMM.asp_mod.add_helper_function(fname,'cuda_boost')
+
+        #Add Boost interface links for components and distance objects
+        GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
+            boost::python::scope().attr("components") = boost::python::object(boost::python::ptr(&components));""",'cuda_boost')
+        GMM.asp_mod.add_to_init("""boost::python::class_<return_component_container>("ReturnClusterContainer")
+            .def(pyublas::by_value_rw_member( "new_component", &return_component_container::component))
+            .def(pyublas::by_value_rw_member( "distance", &return_component_container::distance)) ;
+            boost::python::scope().attr("component_distance") = boost::python::object(boost::python::ptr(&ret));""",'cuda_boost')
+        
+
+    def insert_rendered_code_into_cuda_module(self, cuda_module):
         #Add C/CUDA source code that is not based on code variant parameters
         #TODO: stop using templates and just read from file?
         #TODO: also, rename files and make them .c and .cu instead of .mako?
         c_base_tpl = AspTemplate.Template(filename="templates/gaussian.mako")
         c_base_rend  = c_base_tpl.render()
-        GMM.asp_mod.module.add_to_module([Line(c_base_rend)])
+        GMM.asp_mod.add_to_module([Line(c_base_rend)],'cuda_boost')
         cu_base_tpl = AspTemplate.Template(filename="templates/theta_kernel_base.mako")
         cu_base_rend = cu_base_tpl.render()
-        cuda_mod.add_to_module([Line(cu_base_rend)])
+        GMM.asp_mod.add_to_module([Line(cu_base_rend)],'cuda')
 
         #Add C/CUDA source code that is based on code variant parameters
         c_train_tpl = AspTemplate.Template(filename="templates/train.mako")
@@ -258,7 +305,7 @@ class GMM(object):
         cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
         c_decl_tpl = AspTemplate.Template(filename="templates/gaussian_decl.mako") 
 
-        def determine_compilability_and_input_limits(param_dict):
+        def determine_cuda_compilability_and_input_limits(param_dict):
             for k, v in self.device.params.iteritems():
                 param_dict[k] = str(v)
 
@@ -300,9 +347,9 @@ class GMM(object):
 
             return compilable, comp_func
 
-        def render_and_add_to_module( param_dict ):
+        def render_and_add_to_module( param_dict, limit_generator):
             # Evaluate whether these particular parameters can be compiled on this particular device
-            can_be_compiled, comparison_function_for_input_args = determine_compilability_and_input_limits(param_dict)
+            can_be_compiled, comparison_function_for_input_args = limit_generator(param_dict)
 
             # Get vals based on alphabetical order of keys
             param_names = param_dict.keys()
@@ -321,8 +368,8 @@ class GMM(object):
 
             key_func = lambda name, *args, **kwargs: (name, args[0], args[1], args[2])
             if can_be_compiled: 
-                GMM.asp_mod.add_to_preamble(c_decl_rend)
-                cuda_mod.add_to_module([Line(cu_kern_rend)])
+                GMM.asp_mod.add_to_preamble(c_decl_rend,'cuda_boost')
+                GMM.asp_mod.add_to_module([Line(cu_kern_rend)],'cuda')
                 train_body = c_train_rend
                 eval_body = c_eval_rend
             else:
@@ -336,7 +383,8 @@ class GMM(object):
                                                     lambda results, time: float(time)/float(results[1]),
                                                     [comparison_function_for_input_args],
                                                     [can_be_compiled],
-                                                    param_names
+                                                    param_names,
+                                                    'cuda_boost'
                                                   )
             GMM.asp_mod.add_function_with_variants( [eval_body], 
                                                     'eval', 
@@ -345,53 +393,21 @@ class GMM(object):
                                                     lambda results, time: time,
                                                     [comparison_function_for_input_args],
                                                     [can_be_compiled],
-                                                    param_names
+                                                    param_names,
+                                                    'cuda_boost'
                                                   )
 
-        def generate_permutations ( key_arr, val_arr_arr, current, add_func):
+        def generate_permutations ( key_arr, val_arr_arr, current, add_func, limit_func):
             idx = len(current)
             name = key_arr[idx]
             for v in val_arr_arr[idx]:
                 current[name]  = v
                 if idx == len(key_arr)-1:
-                    add_func(current.copy())
+                    add_func(current.copy(), limit_func)
                 else:
-                    generate_permutations(key_arr, val_arr_arr, current, add_func)
+                    generate_permutations(key_arr, val_arr_arr, current, add_func, limit_func)
             del current[name]
-
-        generate_permutations( self.variant_param_space.keys(), self.variant_param_space.values(), {}, render_and_add_to_module)
-
-        #Add Boost interface links for helper functions whose bodies are already contained in gaussian.mako
-        names_of_helper_funcs = ["alloc_events_on_CPU", "alloc_events_on_GPU", "alloc_components_on_CPU", "alloc_components_on_GPU", "alloc_evals_on_CPU", "alloc_evals_on_GPU", "copy_event_data_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_data_GPU_to_CPU", "dealloc_events_on_CPU", "dealloc_events_on_GPU", "dealloc_components_on_CPU", "dealloc_components_on_GPU", "dealloc_temp_components_on_CPU", "dealloc_evals_on_CPU", "dealloc_evals_on_GPU", "get_temp_component_pi", "get_temp_component_means", "get_temp_component_covars", "relink_components_on_CPU", "compute_distance_rissanen", "merge_components" ]
-        for fname in names_of_helper_funcs:
-            GMM.asp_mod.add_helper_function(fname)
-
-        #Add Boost interface links for components and distance objects
-        GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
-            boost::python::scope().attr("components") = boost::python::object(boost::python::ptr(&components));""")
-        GMM.asp_mod.add_to_init("""boost::python::class_<return_component_container>("ReturnClusterContainer")
-            .def(pyublas::by_value_rw_member( "new_component", &return_component_container::component))
-            .def(pyublas::by_value_rw_member( "distance", &return_component_container::distance)) ;
-            boost::python::scope().attr("component_distance") = boost::python::object(boost::python::ptr(&ret));""")
-        
-        # Setup toolchain and compile
-        def pyublas_inc():
-            file, pathname, descr = find_module("pyublas")
-            return join(pathname, "..", "include")
-        def numpy_inc():
-            file, pathname, descr = find_module("numpy")
-            return join(pathname, "core", "include")
-
-        GMM.asp_mod.toolchain.add_library("project",['.','./include',pyublas_inc(),numpy_inc()],[],[])
-        nvcc_toolchain = GMM.asp_mod.nvcc_toolchain
-        nvcc_toolchain.cflags += ["-arch=sm_%s%s" % self.capability ]
-        nvcc_toolchain.add_library("project",['.','./include'],[],[])
-        
-        #print GMM.asp_mod.module.generate()
-        GMM.asp_mod.compile()
-	GMM.asp_mod.restore_method_timings('train')
-	GMM.asp_mod.restore_method_timings('eval')
-        return GMM.asp_mod
+        generate_permutations( self.cuda_variant_param_space.keys(), self.cuda_variant_param_space.values(), {}, render_and_add_to_module, determine_cuda_compilability_and_input_limits)
 
     def __del__(self):
         self.internal_free_event_data()
