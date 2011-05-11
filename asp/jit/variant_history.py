@@ -100,12 +100,13 @@ class CodeVariantSelector(object):
         pass
 
 class CodeVariants(object):
-    def __init__(self, variant_names, key_func, normalizing_func, param_names):
+    def __init__(self, variant_names, key_func, normalizing_func, param_names, module_names):
         self.v_id_list = variant_names
         self.v_id_set = set(variant_names)
         self.make_key = key_func     
         self.normalize_performance = normalizing_func
         self.param_names = param_names
+        self.module_for_v_id_list = module_names
         self.database = CodeVariantPerformanceDatabase()
         self.limiter = CodeVariantUseCaseLimiter()
         self.selector = CodeVariantSelector(self.database, self.limiter)
@@ -113,13 +114,18 @@ class CodeVariants(object):
     def __contains__(self, v_id):
         return v_id in self.v_id_list
 
-    def append(self, variant_names):
+    def get_module_for_v_id(self, v_id):
+        return self.module_for_v_id_list[self.v_id_list.index(v_id)]
+
+    def append(self, variant_names, module_names):
         self.v_id_list.extend(variant_names)
         self.v_id_set.update(variant_names)
+        self.module_for_v_id_list.extend(module_names)
 
     def get_picklable_obj(self):
         return {
                 'variant_names': self.v_id_list,
+                'module_names': self.module_for_v_id_list,
                 'param_names': self.param_names,
                }
 
@@ -128,4 +134,5 @@ class CodeVariants(object):
 	    print "Warning: Attempted to load pickled performance data for non-matching space of code variants."
 	    return
         self.param_names = obj['param_names']
+        self.module_for_v_id_list = obj['module_names']
 
