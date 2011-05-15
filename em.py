@@ -190,12 +190,12 @@ class GMM(object):
     #Called the first time a GMM instance tries to use a GPU utility function
     def initialize_gpu_util_mod(self):
         GMM.gpu_util_mod = asp_module.ASPModule(use_cuda=True)
-        GMM.gpu_util_mod.modules['cuda_boost'].codepy_toolchain.cc = 'gcc'
-        GMM.gpu_util_mod.modules['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
-        GMM.gpu_util_mod.modules['cuda'].codepy_toolchain.cc = 'gcc'
-        GMM.gpu_util_mod.modules['cuda'].codepy_toolchain.cflags.append('-fPIC')
-        GMM.gpu_util_mod.modules['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC"])
-        GMM.gpu_util_mod.modules['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
+        GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cc = 'gcc'
+        GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.gpu_util_mod.backends['cuda'].codepy_toolchain.cc = 'gcc'
+        GMM.gpu_util_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.gpu_util_mod.backends['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC"])
+        GMM.gpu_util_mod.backends['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
 
         #TODO: Figure out what kind of file to put this in
         #TODO: Or, redo these using more robust functionality stolen from PyCuda
@@ -218,7 +218,7 @@ class GMM(object):
             }
             """, "get_GPU_device_capability_as_tuple")]
         for fbody, fname in util_funcs:
-            GMM.gpu_util_mod.add_function(fbody, fname, module_name='cuda_boost')
+            GMM.gpu_util_mod.add_function(fbody, fname, backend_name='cuda_boost')
         host_project_header_names = [ 'cuda_runtime.h'] 
         for x in host_project_header_names: GMM.gpu_util_mod.add_to_preamble([Include(x, False)], 'cuda_boost')
         GMM.gpu_util_mod.compile_module('cuda')
@@ -231,23 +231,23 @@ class GMM(object):
         # Create ASP module
         GMM.asp_mod = asp_module.ASPModule(use_cuda=True)
 
-        self.insert_non_rendered_code_into_cuda_module(GMM.asp_mod.modules['cuda'])
-        self.insert_rendered_code_into_cuda_module(GMM.asp_mod.modules['cuda'])
+        self.insert_non_rendered_code_into_cuda_module(GMM.asp_mod.backends['cuda'])
+        self.insert_rendered_code_into_cuda_module(GMM.asp_mod.backends['cuda'])
 
         # Setup toolchain and compile
 
 	from codepy.libraries import add_pyublas, add_numpy
-        for mod in GMM.asp_mod.modules.itervalues():
+        for mod in GMM.asp_mod.backends.itervalues():
             mod.codepy_toolchain.add_library("project",['.','./include'],[],[])
             add_pyublas(mod.codepy_toolchain)
             add_numpy(mod.codepy_toolchain)
 
-        GMM.asp_mod.modules['cuda'].codepy_toolchain.cc = 'gcc'
-        GMM.asp_mod.modules['cuda'].codepy_toolchain.cflags.append('-fPIC')
-        GMM.asp_mod.modules['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC","-arch=sm_%s%s" % self.capability ])
-        GMM.asp_mod.modules['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
+        GMM.asp_mod.backends['cuda'].codepy_toolchain.cc = 'gcc'
+        GMM.asp_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.asp_mod.backends['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC","-arch=sm_%s%s" % self.capability ])
+        GMM.asp_mod.backends['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
         
-        #print GMM.asp_mod.modules['cuda'].codepy_module.boost_module.generate()
+        #print GMM.asp_mod.backends['cuda'].codepy_module.boost_module.generate()
         GMM.asp_mod.compile_all()
 	GMM.asp_mod.restore_method_timings('train')
 	GMM.asp_mod.restore_method_timings('eval')
