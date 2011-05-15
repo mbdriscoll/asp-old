@@ -5,9 +5,9 @@ import pickle
 from variant_history import *
 
 class HelperMethodInfo(object):
-    def __init__(self, func_name, module_name):
+    def __init__(self, func_name, backend_name):
         self.func_name = func_name
-        self.module_name = module_name
+        self.backend_name = backend_name
 
 class InternalModule(object):
 
@@ -34,43 +34,43 @@ class ASPModule(object):
         self.specialized_methods = {}
         self.helper_methods = {}
         self.cache_dir = "cache"
-        self.modules = {} 
+        self.backends = {} 
         self.compiled_modules = {} 
-        self.modules['base'] = InternalModule('base', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain())
+        self.backends['base'] = InternalModule('base', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain())
         if use_cuda:
-            self.modules['cuda_boost'] = InternalModule('cuda_boost', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain(), compilable=False)
-            self.modules['cuda'] = InternalModule('cuda', self.cache_dir, codepy.cuda.CudaModule(self.modules['cuda_boost'].codepy_module), codepy.toolchain.guess_toolchain(), codepy.toolchain.guess_nvcc_toolchain())
-            self.modules['cuda'].codepy_module.add_to_preamble([cpp_ast.Include('cuda.h', False)])
+            self.backends['cuda_boost'] = InternalModule('cuda_boost', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain(), compilable=False)
+            self.backends['cuda'] = InternalModule('cuda', self.cache_dir, codepy.cuda.CudaModule(self.backends['cuda_boost'].codepy_module), codepy.toolchain.guess_toolchain(), codepy.toolchain.guess_nvcc_toolchain())
+            self.backends['cuda'].codepy_module.add_to_preamble([cpp_ast.Include('cuda.h', False)])
         if use_cilk:
-            self.modules['cilk'] = InternalModule('cilk', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain())
-            #self.modules[cilk].codepy_module.add_to_preamble([cpp_ast.Include('cilk.h', False)])
+            self.backends['cilk'] = InternalModule('cilk', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain())
+            #self.backends[cilk].codepy_module.add_to_preamble([cpp_ast.Include('cilk.h', False)])
 
     def add_library(self, feature, include_dirs, library_dirs=[], libraries=[], name='base'):
-        self.modules[name].codepy_toolchain.add_library(feature, include_dirs, library_dirs, libraries)
+        self.backends[name].codepy_toolchain.add_library(feature, include_dirs, library_dirs, libraries)
 
     def add_cuda_arch_spec(self, arch):
         archflag = '-arch='
         if 'sm_' not in arch: archflag += 'sm_' 
         archflag += arch
-        self.modules['cuda'].codepy_toolchain.cflags += [archflag]
+        self.backends['cuda'].codepy_toolchain.cflags += [archflag]
 
-    def add_header(self, include_file, module_name='base'):
-        self.modules[module_name].codepy_module.add_to_preamble([cpp_ast.Include(include_file, False)])
+    def add_header(self, include_file, backend_name='base'):
+        self.backends[backend_name].codepy_module.add_to_preamble([cpp_ast.Include(include_file, False)])
 
-    def add_to_preamble(self, pa, module_name='base'):
+    def add_to_preamble(self, pa, backend_name='base'):
         if isinstance(pa, str):
             pa = [cpp_ast.Line(pa)]
-        self.modules[module_name].codepy_module.add_to_preamble(pa)
+        self.backends[backend_name].codepy_module.add_to_preamble(pa)
 
-    def add_to_init(self, stmt, module_name='base'):
+    def add_to_init(self, stmt, backend_name='base'):
         if isinstance(stmt, str):
             stmt = [cpp_ast.Line(stmt)]
-        self.modules[module_name].codepy_module.add_to_init(stmt)
+        self.backends[backend_name].codepy_module.add_to_init(stmt)
 
-    def add_to_module(self, block, module_name='base'):
+    def add_to_module(self, block, backend_name='base'):
         if isinstance(block, str):
             block = [cpp_ast.Line(block)]
-        self.modules[module_name].codepy_module.add_to_module(block)
+        self.backends[backend_name].codepy_module.add_to_module(block)
 
     def get_name_from_func(self, func):
         """
@@ -78,55 +78,55 @@ class ASPModule(object):
         """
         return func.fdecl.subdecl.name
 
-    def add_function_helper(self, func, fname=None, module_name='base'):
-        if isinstance(func, str):
+    def add_function_helper(self, fbody, fname=None, backend_name='base'):
+        if isinstance(fbody, str):
             if fname == None:
                 raise Exception("Cannot add a function as a string without specifying the function's name")
-            self.modules[module_name].codepy_module.add_to_module([cpp_ast.Line(func)])
-            self.modules[module_name].codepy_module.add_to_init([cpp_ast.Statement(
+            self.backends[backend_name].codepy_module.add_to_module([cpp_ast.Line(fbody)])
+            self.backends[backend_name].codepy_module.add_to_init([cpp_ast.Statement(
                         "boost::python::def(\"%s\", &%s)" % (fname, fname))])
         else:
-            self.modules[module_name].codepy_module.add_function(func)
-        self.modules[module_name].dirty = True
-        if module_name == 'cuda_boost': self.modules['cuda'].dirty = True
+            self.backends[backend_name].codepy_module.add_function(fbody)
+        self.backends[backend_name].dirty = True
+        if backend_name == 'cuda_boost': self.backends['cuda'].dirty = True
 
-    def add_function_with_variants(self, variant_funcs, func_name, variant_names, key_maker=lambda name, *args, **kwargs: (name), normalizer=lambda results, time: time, limit_funcs=None, compilable=None, param_names=None, module_name='base'):
+    def add_function_with_variants(self, variant_bodies, func_name, variant_names, key_maker=lambda name, *args, **kwargs: (name), normalizer=lambda results, time: time, limit_funcs=None, compilable=None, param_names=None, backend_name='base'):
         limit_funcs = limit_funcs or [lambda name, *args, **kwargs: True]*len(variant_names) 
         compilable = compilable or [True]*len(variant_names)
         param_names = param_names or ['Unknown']*len(variant_names)
         method_info = self.specialized_methods.get(func_name, None)
         if not method_info:
-            method_info = CodeVariants(variant_names, key_maker, normalizer, param_names, [module_name]*len(variant_names))
+            method_info = CodeVariants(variant_names, key_maker, normalizer, param_names, [backend_name]*len(variant_names))
             method_info.limiter.append(variant_names, limit_funcs, compilable)
         else:
-            method_info.append(variant_names, [module_name]*len(variant_names))
+            method_info.append(variant_names, [backend_name]*len(variant_names))
             method_info.database.clear_oracle()
             method_info.limiter.append(variant_names, limit_funcs, compilable)
-        for x in range(0,len(variant_funcs)):
-            self.add_function_helper(variant_funcs[x], fname=variant_names[x], module_name=module_name)
+        for x in range(0,len(variant_bodies)):
+            self.add_function_helper(variant_bodies[x], fname=variant_names[x], backend_name=backend_name)
         self.specialized_methods[func_name] = method_info
 
-    def add_function(self, funcs, fname=None, variant_names=None, module_name='base'):
+    def add_function(self, funcs, fname=None, variant_names=None, backend_name='base'):
         """
         self.add_function(func) takes func as either a generable AST or a string, or
         list of variants in either format.
         """
         if variant_names:
-            self.add_function_with_variants(funcs, fname, variant_names, module_name=module_name)
+            self.add_function_with_variants(funcs, fname, variant_names, backend_name=backend_name)
         else:
             variant_funcs = [funcs]
             if not fname:
                 fname = self.get_name_from_func(funcs)
             variant_names = [fname]
-            self.add_function_with_variants(variant_funcs, fname, variant_names, module_name=module_name)
+            self.add_function_with_variants(variant_funcs, fname, variant_names, backend_name=backend_name)
 
-    def add_helper_function(self, func_name, module_name='base'):
+    def add_helper_function(self, func_name, backend_name='base'):
         method_info = self.helper_methods.get(func_name, None)
         if method_info:
             raise Exception("Overwrote helper function info; duplicate method name!")
         else:
-            method_info = HelperMethodInfo(func_name, module_name)
-        self.add_function_helper("", fname=func_name, module_name=module_name)
+            method_info = HelperMethodInfo(func_name, backend_name)
+        self.add_function_helper("", fname=func_name, backend_name=backend_name)
         self.helper_methods[func_name] = method_info
      
     def specialized_func(self, name):
@@ -138,9 +138,9 @@ class ASPModule(object):
             if not v_id: 
                 raise Exception("No variant of method found to run on input size %s on the specified device" % str(args))
            
-            module_name = method_info.get_module_for_v_id(v_id)
-            module_name = 'cuda' if module_name == 'cuda_boost' else module_name
-            module = self.compiled_modules[module_name]
+            backend_name = method_info.get_module_for_v_id(v_id)
+            backend_name = 'cuda' if backend_name == 'cuda_boost' else backend_name
+            module = self.compiled_modules[backend_name]
             real_func = module.__getattribute__(v_id)
             start_time = time.time() 
             results = real_func(*args, **kwargs)
@@ -153,8 +153,8 @@ class ASPModule(object):
     def helper_func(self, name):
         def helper(*args, **kwargs):
             method_info = self.helper_methods[name]
-            module_name = 'cuda' if method_info.module_name == 'cuda_boost' else imethod_info.module_name
-            real_func = self.compiled_modules[module_name].__getattribute__(name)
+            backend_name = 'cuda' if method_info.backend_name == 'cuda_boost' else imethod_info.backend_name
+            real_func = self.compiled_modules[backend_name].__getattribute__(name)
             return real_func(*args, **kwargs)
         return helper
 
@@ -180,12 +180,12 @@ class ASPModule(object):
         method_info = self.specialized_methods[name]
         method_info.database.clear()
 
-    def compile_module(self, module_name):
-        self.compiled_modules[module_name] = self.modules[module_name].compile()
+    def compile_module(self, backend_name):
+        self.compiled_modules[backend_name] = self.backends[backend_name].compile()
 
     def compile_all(self):
-        for name, module in filter(lambda x: x[1].dirty and x[1].compilable, self.modules.iteritems()):
-            self.compiled_modules[name] = module.compile()
+        for name, backend in filter(lambda x: x[1].dirty and x[1].compilable, self.backends.iteritems()):
+            self.compiled_modules[name] = backend.compile()
         
     def __getattr__(self, name):
         if name in self.specialized_methods:
