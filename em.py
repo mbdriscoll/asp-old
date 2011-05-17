@@ -231,8 +231,10 @@ class GMM(object):
         # Create ASP module
         GMM.asp_mod = asp_module.ASPModule(use_cuda=True)
 
-        self.insert_non_rendered_code_into_cuda_module(GMM.asp_mod.backends['cuda'])
-        self.insert_rendered_code_into_cuda_module(GMM.asp_mod.backends['cuda'])
+        self.insert_non_rendered_code_into_listed_modules(['cuda_boost'])
+
+        self.insert_non_rendered_code_into_cuda_module()
+        self.insert_rendered_code_into_cuda_module()
 
         # Setup toolchain and compile
 
@@ -253,8 +255,25 @@ class GMM(object):
 	GMM.asp_mod.restore_method_timings('eval')
         return GMM.asp_mod
 
+    def insert_non_rendered_code_into_listed_modules(self, names_of_modules):
+        c_base_tpl = AspTemplate.Template(filename="templates/em_base_helper_funcs.mako")
+        c_base_rend = c_base_tpl.render()
+        GMM.asp_mod.add_to_module([Line(c_base_rend)],'cuda_boost')
+        names_of_helper_funcs = ["alloc_events_on_CPU", "alloc_components_on_CPU", "alloc_evals_on_CPU", "dealloc_events_on_CPU", "dealloc_components_on_CPU", "dealloc_temp_components_on_CPU", "dealloc_evals_on_CPU", "get_temp_component_pi", "get_temp_component_means", "get_temp_component_covars", "relink_components_on_CPU", "compute_distance_rissanen", "merge_components" ]
+        for mname in names_of_modules:
+            for fname in names_of_helper_funcs:
+                GMM.asp_mod.add_helper_function(fname, mname)
+            #Add Boost interface links for components and distance objects
+            GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
+                boost::python::scope().attr("components") = boost::python::object(boost::python::ptr(&components));""", mname)
+            GMM.asp_mod.add_to_init("""boost::python::class_<return_component_container>("ReturnClusterContainer")
+                .def(pyublas::by_value_rw_member( "new_component", &return_component_container::component))
+                .def(pyublas::by_value_rw_member( "distance", &return_component_container::distance)) ;
+                 boost::python::scope().attr("component_distance") = boost::python::object(boost::python::ptr(&ret));""", mname)
 
-    def insert_non_rendered_code_into_cuda_module(self, cuda_module):
+    def insert_non_rendered_code_into_cuda_module(self):
+        #Add C/CUDA source code that is not based on code variant parameters
+
         #Add decls to preamble necessary for linking to compiled CUDA sources
         component_t_decl =""" 
             typedef struct components_struct {
@@ -274,36 +293,24 @@ class GMM(object):
         for x in host_system_header_names: 
             GMM.asp_mod.add_to_preamble([Include(x, True)],'cuda_boost')
 
-        #Add Boost interface links for helper functions whose bodies are already contained in gaussian.mako
-        names_of_helper_funcs = ["alloc_events_on_CPU", "alloc_events_on_GPU", "alloc_components_on_CPU", "alloc_components_on_GPU", "alloc_evals_on_CPU", "alloc_evals_on_GPU", "copy_event_data_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_data_GPU_to_CPU", "dealloc_events_on_CPU", "dealloc_events_on_GPU", "dealloc_components_on_CPU", "dealloc_components_on_GPU", "dealloc_temp_components_on_CPU", "dealloc_evals_on_CPU", "dealloc_evals_on_GPU", "get_temp_component_pi", "get_temp_component_means", "get_temp_component_covars", "relink_components_on_CPU", "compute_distance_rissanen", "merge_components" ]
+        #Add bodies of helper functions
+        c_base_tpl = AspTemplate.Template(filename="templates/em_cuda_host_helper_funcs.mako")
+        c_base_rend  = c_base_tpl.render()
+        GMM.asp_mod.add_to_module([Line(c_base_rend)],'cuda_boost')
+        cu_base_tpl = AspTemplate.Template(filename="templates/em_cuda_device_helper_funcs.mako")
+        cu_base_rend = cu_base_tpl.render()
+        GMM.asp_mod.add_to_module([Line(cu_base_rend)],'cuda')
+        #Add Boost interface links for helper functions
+        names_of_helper_funcs = ["alloc_events_on_GPU","alloc_components_on_GPU","alloc_evals_on_GPU","copy_event_data_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_data_GPU_to_CPU","dealloc_events_on_GPU","dealloc_components_on_GPU", "dealloc_evals_on_GPU"]
         for fname in names_of_helper_funcs:
             GMM.asp_mod.add_helper_function(fname,'cuda_boost')
 
-        #Add Boost interface links for components and distance objects
-        GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
-            boost::python::scope().attr("components") = boost::python::object(boost::python::ptr(&components));""",'cuda_boost')
-        GMM.asp_mod.add_to_init("""boost::python::class_<return_component_container>("ReturnClusterContainer")
-            .def(pyublas::by_value_rw_member( "new_component", &return_component_container::component))
-            .def(pyublas::by_value_rw_member( "distance", &return_component_container::distance)) ;
-            boost::python::scope().attr("component_distance") = boost::python::object(boost::python::ptr(&ret));""",'cuda_boost')
-        
-
-    def insert_rendered_code_into_cuda_module(self, cuda_module):
-        #Add C/CUDA source code that is not based on code variant parameters
-        #TODO: stop using templates and just read from file?
-        #TODO: also, rename files and make them .c and .cu instead of .mako?
-        c_base_tpl = AspTemplate.Template(filename="templates/gaussian.mako")
-        c_base_rend  = c_base_tpl.render()
-        GMM.asp_mod.add_to_module([Line(c_base_rend)],'cuda_boost')
-        cu_base_tpl = AspTemplate.Template(filename="templates/theta_kernel_base.mako")
-        cu_base_rend = cu_base_tpl.render()
-        GMM.asp_mod.add_to_module([Line(cu_base_rend)],'cuda')
-
+    def insert_rendered_code_into_cuda_module(self):
         #Add C/CUDA source code that is based on code variant parameters
-        c_train_tpl = AspTemplate.Template(filename="templates/train.mako")
-        c_eval_tpl = AspTemplate.Template(filename="templates/eval.mako")
-        cu_kern_tpl = AspTemplate.Template(filename="templates/theta_kernel.mako")
-        c_decl_tpl = AspTemplate.Template(filename="templates/gaussian_decl.mako") 
+        c_train_tpl = AspTemplate.Template(filename="templates/em_cuda_train.mako")
+        c_eval_tpl = AspTemplate.Template(filename="templates/em_cuda_eval.mako")
+        cu_kern_tpl = AspTemplate.Template(filename="templates/em_cuda_kernels.mako")
+        c_decl_tpl = AspTemplate.Template(filename="templates/em_cuda_launch_decl.mako") 
 
         def determine_cuda_compilability_and_input_limits(param_dict):
             for k, v in self.device.params.iteritems():
@@ -362,7 +369,7 @@ class GMM(object):
             c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
 
             def var_name_generator(base):
-                return '_'.join([base]+vals)
+                return '_'.join(['em','cuda',base]+vals)
             def dummy_func_body_gen(base):
                 return "void "+var_name_generator(base)+"(int m, int d, int n, pyublas::numpy_array<float> data){}"
 

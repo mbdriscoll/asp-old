@@ -2,7 +2,7 @@
 tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0' else 'float'
 %>
 
-boost::python::tuple train${'_'+'_'.join(param_val_list)} (
+boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
                              int num_components, 
                              int num_dimensions, 
                              int num_events, 

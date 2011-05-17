@@ -1,5 +1,5 @@
 
-float eval${'_'+'_'.join(param_val_list)} (
+float em_cuda_eval${'_'+'_'.join(param_val_list)} (
                              int num_components, 
                              int num_dimensions, 
                              int num_events, 

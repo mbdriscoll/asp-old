@@ -1,53 +1,19 @@
-/*
- * Gaussian Mixture Model Clustering with CUDA
- *
- * Orginal Author: Andrew Pangborn
- * Department of Computer Engineering
- * Rochester Institute of Technology
- * 
- */
-
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
-
-#  define CUT_CHECK_ERROR(errorMessage) {                                    \
-    cudaError_t err = cudaGetLastError();                                    \
-    if( cudaSuccess != err) {                                                \
-        fprintf(stderr, "Cuda error: %s in file '%s' in line %i : %s.\n",    \
-                errorMessage, __FILE__, __LINE__, cudaGetErrorString( err) );\
-        exit(EXIT_FAILURE);                                                  \
-    }                                                                        \
-   }
-
-#  define CUDA_SAFE_CALL_NO_SYNC( call) {                                    \
-    cudaError err = call;                                                    \
-    if( cudaSuccess != err) {                                                \
-        fprintf(stderr, "Cuda error in file '%s' in line %i : %s.\n",        \
-                __FILE__, __LINE__, cudaGetErrorString( err) );              \
-        exit(EXIT_FAILURE);                                                  \
-    } }
-
-#  define CUDA_SAFE_CALL( call)     CUDA_SAFE_CALL_NO_SYNC(call);            \
-
 
 typedef struct return_component_container
 {
   boost::python::object component;
-  //pyublas::numpy_array<float> distance;
   float distance;
 } ret_c_con_t;
 
 ret_c_con_t ret;
-  
+
 //=== Data structure pointers ===
 
 //CPU copies of events
 float *fcs_data_by_event;
 float *fcs_data_by_dimension;
-
-//GPU copies of events
-float* d_fcs_data_by_event;
-float* d_fcs_data_by_dimension;
 
 //CPU copies of components
 components_t components;
@@ -59,36 +25,21 @@ static int num_scratch_components = 0;
 float *component_memberships;
 float *loglikelihoods;
 
-//GPU copies of components
-components_t temp_components;
-components_t* d_components;
-
-//GPU copies of eval data
-float *d_component_memberships;
-float *d_loglikelihoods;
-
-//=================================
-
-//AHC functions
+//=== AHC function prototypes ===
 void copy_component(components_t *dest, int c_dest, components_t *src, int c_src, int num_dimensions);
 void add_components(components_t *components, int c1, int c2, components_t *temp_component, int num_dimensions);
 float component_distance(components_t *components, int c1, int c2, components_t *temp_component, int num_dimensions);
-//end AHC functions
 
-//Copy functions to ensure CPU data structures are up to date
-void copy_component_data_GPU_to_CPU(int num_components, int num_dimensions);
-void copy_evals_data_GPU_to_CPU(int num_events, int num_components);
-
-// Function prototypes
+//=== Helper function prototypes ===
 void writeCluster(FILE* f, components_t components, int c,  int num_dimensions);
 void printCluster(components_t components, int c, int num_dimensions);
 void invert_cpu(float* data, int actualsize, float* log_determinant);
-int invert_matrix(float* a, int n, float* determinant);
+int  invert_matrix(float* a, int n, float* determinant);
+
+//=== Memory Alloc/Free Functions ===
 
 components_t* alloc_temp_component_on_CPU(int num_dimensions) {
-
   components_t* scratch_component = (components_t*)malloc(sizeof(components_t));
-
   scratch_component->N = (float*) malloc(sizeof(float));
   scratch_component->pi = (float*) malloc(sizeof(float));
   scratch_component->constant = (float*) malloc(sizeof(float));
@@ -96,29 +47,24 @@ components_t* alloc_temp_component_on_CPU(int num_dimensions) {
   scratch_component->means = (float*) malloc(sizeof(float)*num_dimensions);
   scratch_component->R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
   scratch_component->Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions);
-
   return scratch_component;
 }
 
 void dealloc_temp_components_on_CPU() {
-
-for(int i = 0; i<num_scratch_components; i++) {
-  free(scratch_component_arr[i]->N);
-  free(scratch_component_arr[i]->pi);
-  free(scratch_component_arr[i]->constant);
-  free(scratch_component_arr[i]->avgvar);
-  free(scratch_component_arr[i]->means);
-  free(scratch_component_arr[i]->R);
-  free(scratch_component_arr[i]->Rinv);
+  for(int i = 0; i<num_scratch_components; i++) {
+    free(scratch_component_arr[i]->N);
+    free(scratch_component_arr[i]->pi);
+    free(scratch_component_arr[i]->constant);
+    free(scratch_component_arr[i]->avgvar);
+    free(scratch_component_arr[i]->means);
+    free(scratch_component_arr[i]->R);
+    free(scratch_component_arr[i]->Rinv);
   }
   num_scratch_components = 0;
-
-  return;
 }
+
 // ================== Event data allocation on CPU  ================= :
 void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events, int num_dimensions) {
-
-  //printf("Alloc events on CPU\n");
 
   fcs_data_by_event = input_data.data();
   // Transpose the event data (allows coalesced access pattern in E-step kernel)
@@ -131,35 +77,12 @@ void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events,
       fcs_data_by_dimension[d*num_events+e] = fcs_data_by_event[e*num_dimensions+d];
     }
   }
-  return;
 }
 
-// ================== Event data allocation on GPU  ================= :
-
-void alloc_events_on_GPU(int num_dimensions, int num_events) {
-  //printf("Alloc events on GPU\n");
-  int mem_size = num_dimensions*num_events*sizeof(float);
-    
-  // allocate device memory for FCS data
-  CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_event, mem_size));
-  CUDA_SAFE_CALL(cudaMalloc( (void**) &d_fcs_data_by_dimension, mem_size));
-
-  return;
-}
-
-//hack hack..
-void relink_components_on_CPU(pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
-     components.pi = weights.data();
-     components.means = means.data();
-     components.R = covars.data();
-}
 
 // ================== Cluster data allocation on CPU  ================= :
-
 void alloc_components_on_CPU(int original_num_components, int num_dimensions, pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
 
-  //printf("Alloc components on CPU\n");
-  
   //components.pi = (float*) malloc(sizeof(float)*original_num_components);
   //components.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_components);   
   //components.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_components);
@@ -171,151 +94,45 @@ void alloc_components_on_CPU(int original_num_components, int num_dimensions, py
   components.constant = (float*) malloc(sizeof(float)*original_num_components);
   components.avgvar = (float*) malloc(sizeof(float)*original_num_components);
   components.Rinv = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_components);
- 
-  return;
 }  
 
-// ================== Cluster data allocation on GPU  ================= :
-void alloc_components_on_GPU(int original_num_components, int num_dimensions) {
-
-  //printf("Alloc components on GPU\n");
-
-  // Setup the component data structures on device
-  // First allocate structures on the host, CUDA malloc the arrays
-  // Then CUDA malloc structures on the device and copy them over
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.N),sizeof(float)*original_num_components));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.pi),sizeof(float)*original_num_components));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.constant),sizeof(float)*original_num_components));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.avgvar),sizeof(float)*original_num_components));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.means),sizeof(float)*num_dimensions*original_num_components));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.R),sizeof(float)*num_dimensions*num_dimensions*original_num_components));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(temp_components.Rinv),sizeof(float)*num_dimensions*num_dimensions*original_num_components));
-   
-  // Allocate a struct on the device 
-  CUDA_SAFE_CALL(cudaMalloc((void**) &d_components, sizeof(components_t)));
-    
-  // Copy Cluster data to device
-  CUDA_SAFE_CALL(cudaMemcpy(d_components,&temp_components,sizeof(components_t),cudaMemcpyHostToDevice));
-
-  return;
+//Hacky way to make sure the CPU pointers are aimed at the right component data
+void relink_components_on_CPU(pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
+     components.pi = weights.data();
+     components.means = means.data();
+     components.R = covars.data();
 }
 
-// ================= Eval data alloc on CPU and GPU =============== 
-
+// ================= Eval data alloc on CPU =============== 
 void alloc_evals_on_CPU(pyublas::numpy_array<float> component_mem_np_arr, pyublas::numpy_array<float> loglikelihoods_np_arr){
   component_memberships = component_mem_np_arr.data();
   loglikelihoods = loglikelihoods_np_arr.data();
-}
-
-void alloc_evals_on_GPU(int num_events, int num_components){
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_component_memberships),sizeof(float)*num_events*num_components));
-  CUDA_SAFE_CALL(cudaMalloc((void**) &(d_loglikelihoods),sizeof(float)*num_events));
-}
-
-// ======================== Copy event data from CPU to GPU ================
-void copy_event_data_CPU_to_GPU(int num_events, int num_dimensions) {
-
-  //printf("Copy events to GPU\n");
-  int mem_size = num_dimensions*num_events*sizeof(float);
-  // copy FCS to device
-  CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_event, fcs_data_by_event, mem_size,cudaMemcpyHostToDevice) );
-  CUDA_SAFE_CALL(cudaMemcpy( d_fcs_data_by_dimension, fcs_data_by_dimension, mem_size,cudaMemcpyHostToDevice) );
-  return;
-}
-
-// ======================== Copy component data from CPU to GPU ================
-void copy_component_data_CPU_to_GPU(int num_components, int num_dimensions) {
-
-   CUDA_SAFE_CALL(cudaMemcpy(temp_components.N, components.N, sizeof(float)*num_components,cudaMemcpyHostToDevice)); 
-   CUDA_SAFE_CALL(cudaMemcpy(temp_components.pi, components.pi, sizeof(float)*num_components,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_components.constant, components.constant, sizeof(float)*num_components,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_components.avgvar, components.avgvar, sizeof(float)*num_components,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_components.means, components.means, sizeof(float)*num_dimensions*num_components,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_components.R, components.R, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(temp_components.Rinv, components.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyHostToDevice));
-   CUDA_SAFE_CALL(cudaMemcpy(d_components,&temp_components,sizeof(components_t),cudaMemcpyHostToDevice));
-   return;
-}
-// ======================== Copy component data from GPU to CPU ================
-void copy_component_data_GPU_to_CPU(int num_components, int num_dimensions) {
-
-  CUDA_SAFE_CALL(cudaMemcpy(&temp_components, d_components, sizeof(components_t),cudaMemcpyDeviceToHost));
-  // copy all of the arrays from the structs
-  CUDA_SAFE_CALL(cudaMemcpy(components.N, temp_components.N, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(components.pi, temp_components.pi, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(components.constant, temp_components.constant, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(components.avgvar, temp_components.avgvar, sizeof(float)*num_components,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(components.means, temp_components.means, sizeof(float)*num_dimensions*num_components,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(components.R, temp_components.R, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(components.Rinv, temp_components.Rinv, sizeof(float)*num_dimensions*num_dimensions*num_components,cudaMemcpyDeviceToHost));
-  
-  return;
-}
-
-// ======================== Copy eval data from GPU to CPU ================
-void copy_evals_data_GPU_to_CPU(int num_events, int num_components){
-  CUDA_SAFE_CALL(cudaMemcpy(component_memberships, d_component_memberships, sizeof(float)*num_events*num_components, cudaMemcpyDeviceToHost));
-  CUDA_SAFE_CALL(cudaMemcpy(loglikelihoods, d_loglikelihoods, sizeof(float)*num_events, cudaMemcpyDeviceToHost));
 }
 
 // ================== Event data dellocation on CPU  ================= :
 void dealloc_events_on_CPU() {
   //free(fcs_data_by_event);
   free(fcs_data_by_dimension);
-  return;
 }
-
-// ================== Event data dellocation on GPU  ================= :
-void dealloc_events_on_GPU() {
-  CUDA_SAFE_CALL(cudaFree(d_fcs_data_by_event));
-  CUDA_SAFE_CALL(cudaFree(d_fcs_data_by_dimension));
-  return;
-}
-
 
 // ==================== Cluster data deallocation on CPU =================  
 void dealloc_components_on_CPU() {
-
   //free(components.pi);
   //free(components.means);
   //free(components.R);
-
   free(components.N);
   free(components.constant);
   free(components.avgvar);
   free(components.Rinv);
-  return;
 }
 
-// ==================== Cluster data deallocation on GPU =================  
-void dealloc_components_on_GPU() {
-  CUDA_SAFE_CALL(cudaFree(temp_components.N));
-  CUDA_SAFE_CALL(cudaFree(temp_components.pi));
-  CUDA_SAFE_CALL(cudaFree(temp_components.constant));
-  CUDA_SAFE_CALL(cudaFree(temp_components.avgvar));
-  CUDA_SAFE_CALL(cudaFree(temp_components.means));
-  CUDA_SAFE_CALL(cudaFree(temp_components.R));
-  CUDA_SAFE_CALL(cudaFree(temp_components.Rinv));
-  
-  CUDA_SAFE_CALL(cudaFree(d_components));
-
-  return;
-}
-
-// ==================== Eval data deallocation on CPU and GPU =================  
+// ==================== Eval data deallocation on CPU =================  
 void dealloc_evals_on_CPU() {
   //free(component_memberships);
   //free(loglikelihoods);
-  return;
 }
 
-void dealloc_evals_on_GPU() {
-  CUDA_SAFE_CALL(cudaFree(d_component_memberships));
-  CUDA_SAFE_CALL(cudaFree(d_loglikelihoods));
-  return;
-}
-
-// Accessor functions for pi, means, covars 
+// ==== Accessor functions for pi, means, covars ====
 
 pyublas::numpy_array<float> get_temp_component_pi(components_t* c){
   pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(1);
@@ -364,10 +181,6 @@ void merge_components(int min_c1, int min_c2, components_t *min_component, int n
   
     copy_component(&components,i,&components,i+1,num_dimensions);
   }
-
-  //return boost::python::object(boost::python::ptr(components));
-  //return boost::python::object(components);
-  return;
 }
 
 
@@ -469,9 +282,6 @@ void writeCluster(FILE* f, components_t components, int c, int num_dimensions) {
 void printCluster(components_t components, int c, int num_dimensions) {
   writeCluster(stdout,components,c,num_dimensions);
 }
-
-
-static float double_abs(float x);
 
 static int 
 ludcmp(float *a,int n,int *indx,float *d);
@@ -615,12 +425,6 @@ int invert_matrix(float* a, int n, float* determinant) {
     free(indx);
     return(0);
   }
-}
-
-static float double_abs(float x)
-{
-  if(x<0) x = -x;
-  return(x);
 }
 
 #define TINY 1.0e-20

@@ -1,11 +1,3 @@
-/*
- * CUDA Kernels for Expectation Maximization with Gaussian Mixture Models
- *
- * Original Author: Andrew Pangborn
- * Department of Computer Engineering
- * Rochester Institute of Technology
- */
-
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
 
