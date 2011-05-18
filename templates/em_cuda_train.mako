@@ -5,8 +5,7 @@ tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0
 boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
                              int num_components, 
                              int num_dimensions, 
-                             int num_events, 
-                             pyublas::numpy_array<float> input_data ) 
+                             int num_events) 
 {
   
   //allocate MxM pointers for scratch components used during merging

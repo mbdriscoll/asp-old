@@ -64,9 +64,9 @@ void dealloc_temp_components_on_CPU() {
 }
 
 // ================== Event data allocation on CPU  ================= :
-void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events, int num_dimensions) {
+void alloc_events_on_CPU(pyublas::numpy_vector<float> input_data, int num_events, int num_dimensions) {
 
-  fcs_data_by_event = input_data.data();
+  fcs_data_by_event = input_data.data().data();
   // Transpose the event data (allows coalesced access pattern in E-step kernel)
   // This has consecutive values being from the same dimension of the data 
   // (num_dimensions by num_events matrix)
@@ -81,14 +81,14 @@ void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events,
 
 
 // ================== Cluster data allocation on CPU  ================= :
-void alloc_components_on_CPU(int original_num_components, int num_dimensions, pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
+void alloc_components_on_CPU(int original_num_components, int num_dimensions, pyublas::numpy_vector<float> weights, pyublas::numpy_vector<float> means, pyublas::numpy_vector<float> covars) {
 
   //components.pi = (float*) malloc(sizeof(float)*original_num_components);
   //components.means = (float*) malloc(sizeof(float)*num_dimensions*original_num_components);   
   //components.R = (float*) malloc(sizeof(float)*num_dimensions*num_dimensions*original_num_components);
-  components.pi = weights.data();
-  components.means = means.data();
-  components.R = covars.data();
+  components.pi = weights.data().data();
+  components.means = means.data().data();
+  components.R = covars.data().data();
 
   components.N = (float*) malloc(sizeof(float)*original_num_components);      
   components.constant = (float*) malloc(sizeof(float)*original_num_components);
@@ -97,16 +97,16 @@ void alloc_components_on_CPU(int original_num_components, int num_dimensions, py
 }  
 
 //Hacky way to make sure the CPU pointers are aimed at the right component data
-void relink_components_on_CPU(pyublas::numpy_array<float> weights, pyublas::numpy_array<float> means, pyublas::numpy_array<float> covars) {
-     components.pi = weights.data();
-     components.means = means.data();
-     components.R = covars.data();
+void relink_components_on_CPU(pyublas::numpy_vector<float> weights, pyublas::numpy_vector<float> means, pyublas::numpy_vector<float> covars) {
+     components.pi = weights.data().data();
+     components.means = means.data().data();
+     components.R = covars.data().data();
 }
 
 // ================= Eval data alloc on CPU =============== 
-void alloc_evals_on_CPU(pyublas::numpy_array<float> component_mem_np_arr, pyublas::numpy_array<float> loglikelihoods_np_arr){
-  component_memberships = component_mem_np_arr.data();
-  loglikelihoods = loglikelihoods_np_arr.data();
+void alloc_evals_on_CPU(pyublas::numpy_vector<float> component_mem_np_arr, pyublas::numpy_vector<float> loglikelihoods_np_arr){
+  component_memberships = component_mem_np_arr.data().data();
+  loglikelihoods = loglikelihoods_np_arr.data().data();
 }
 
 // ================== Event data dellocation on CPU  ================= :
@@ -134,20 +134,20 @@ void dealloc_evals_on_CPU() {
 
 // ==== Accessor functions for pi, means, covars ====
 
-pyublas::numpy_array<float> get_temp_component_pi(components_t* c){
-  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(1);
+pyublas::numpy_vector<float> get_temp_component_pi(components_t* c){
+  pyublas::numpy_vector<float> ret = pyublas::numpy_vector<float>(1);
   std::copy( c->pi, c->pi+1, ret.begin());
   return ret;
 }
 
-pyublas::numpy_array<float> get_temp_component_means(components_t* c, int D){
-  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D);
+pyublas::numpy_vector<float> get_temp_component_means(components_t* c, int D){
+  pyublas::numpy_vector<float> ret = pyublas::numpy_vector<float>(D);
   std::copy( c->means, c->means+D, ret.begin());
   return ret;
 }
 
-pyublas::numpy_array<float> get_temp_component_covars(components_t* c, int D){
-  pyublas::numpy_array<float> ret = pyublas::numpy_array<float>(D*D);
+pyublas::numpy_vector<float> get_temp_component_covars(components_t* c, int D){
+  pyublas::numpy_vector<float> ret = pyublas::numpy_vector<float>(D*D);
   std::copy( c->R, c->R+D*D, ret.begin());
   return ret;
 }

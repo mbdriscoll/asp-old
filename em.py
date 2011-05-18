@@ -90,7 +90,7 @@ class GMM(object):
 
     #Default parameter space for code variants
     variant_param_defaults = { 'base': {},
-        'cuda': {
+        'cuda_boost': {
             'num_blocks_estep': ['16'],
             'num_threads_estep': ['512'],
             'num_threads_mstep': ['256'],
@@ -103,7 +103,10 @@ class GMM(object):
             'max_iters': ['10'],
             'min_iters': ['1'],
             'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
-        'cilk': {}
+        'cilk_boost': {
+            'diag_only': ['0'],
+            'max_iters': ['10'],
+            'min_iters': ['1'] }
     }
 
     
@@ -152,6 +155,7 @@ class GMM(object):
 
     backend_compilability_and_input_limits = { 
         'base': lambda param_dict, device: (True,lambda *args, **kwargs: True),
+        'cilk_boost': lambda param_dict, device: (True,lambda *args, **kwargs: True),
         'cilk': lambda param_dict, device: (True,lambda *args, **kwargs: True),
         'cuda_boost': cuda_limits,
         'cuda': cuda_limits
@@ -159,21 +163,25 @@ class GMM(object):
 
     def cuda_backend_render_func(param_dict, vals):
         cu_kern_tpl = AspTemplate.Template(filename="templates/em_cuda_kernels.mako")
-        c_decl_tpl = AspTemplate.Template(filename="templates/em_cuda_launch_decl.mako") 
         cu_kern_rend = cu_kern_tpl.render( param_val_list = vals, **param_dict)
+        GMM.asp_mod.add_to_module([Line(cu_kern_rend)],'cuda')
+        c_decl_tpl = AspTemplate.Template(filename="templates/em_cuda_launch_decl.mako") 
         c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
         GMM.asp_mod.add_to_preamble(c_decl_rend,'cuda_boost')
-        GMM.asp_mod.add_to_module([Line(cu_kern_rend)],'cuda')
         
     def cilk_backend_render_func(param_dict, vals):
         cilk_kern_tpl = AspTemplate.Template(filename="templates/em_cilk_kernels.mako")
         cilk_kern_rend = cilk_kern_tpl.render( param_val_list = vals, **param_dict)
         GMM.asp_mod.add_to_module([Line(cilk_kern_rend)],'cilk')
+        c_decl_tpl = AspTemplate.Template(filename="templates/em_cilk_kernel_decl.mako") 
+        c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
+        GMM.asp_mod.add_to_preamble(c_decl_rend,'cilk_boost')
 
     backend_specific_funcs = {
         'base': lambda param_dict, vals: None,
         'cuda_boost': cuda_backend_render_func,
         'cuda': cuda_backend_render_func,
+        'cilk_boost': cilk_backend_render_func,
         'cilk': cilk_backend_render_func
     }
 
@@ -187,59 +195,62 @@ class GMM(object):
 
     # nternal functions to allocate and deallocate component and event data on the CPU and GPU
     def internal_alloc_event_data(self, X):
-        if not np.array_equal(GMM.event_data_gpu_copy, X) and X is not None:
-            if GMM.event_data_gpu_copy is not None:
+        if not np.array_equal(GMM.event_data_cpu_copy, X) and X is not None:
+            if GMM.event_data_cpu_copy is not None:
                 self.internal_free_event_data()
             self.get_asp_mod().alloc_events_on_CPU(X, X.shape[0], X.shape[1])
-            self.get_asp_mod().alloc_events_on_GPU(X.shape[0], X.shape[1])
-            self.get_asp_mod().copy_event_data_CPU_to_GPU(X.shape[0], X.shape[1])
-            GMM.event_data_gpu_copy = X
             GMM.event_data_cpu_copy = X
+            if self.use_cuda:
+                self.get_asp_mod().alloc_events_on_GPU(X.shape[0], X.shape[1])
+                self.get_asp_mod().copy_event_data_CPU_to_GPU(X.shape[0], X.shape[1])
+                GMM.event_data_gpu_copy = X
 
     def internal_free_event_data(self):
-        if GMM.event_data_gpu_copy is not None:
-            self.get_asp_mod().dealloc_events_on_GPU()
-            GMM.event_data_gpu_copy = None
         if self.event_data_cpu_copy is not None:
             self.get_asp_mod().dealloc_events_on_CPU()
             GMM.event_data_cpu_copy = None
+        if GMM.event_data_gpu_copy is not None:
+            self.get_asp_mod().dealloc_events_on_GPU()
+            GMM.event_data_gpu_copy = None
 
     def internal_alloc_component_data(self):
-        if GMM.component_data_gpu_copy != self.components:
-            if GMM.component_data_gpu_copy:
+        if GMM.component_data_cpu_copy != self.components:
+            if GMM.component_data_cpu_copy:
                 self.internal_free_component_data()
-            self.get_asp_mod().alloc_components_on_GPU(self.M, self.D)
             self.get_asp_mod().alloc_components_on_CPU(self.M, self.D, self.components.weights, self.components.means, self.components.covars)
-            self.get_asp_mod().copy_component_data_CPU_to_GPU(self.M, self.D)
-            GMM.component_data_gpu_copy = self.components
             GMM.component_data_cpu_copy = self.components
+            if self.use_cuda:
+                self.get_asp_mod().alloc_components_on_GPU(self.M, self.D)
+                self.get_asp_mod().copy_component_data_CPU_to_GPU(self.M, self.D)
+                GMM.component_data_gpu_copy = self.components
             
     def internal_free_component_data(self):
-        if GMM.component_data_gpu_copy is not None:
-            self.get_asp_mod().dealloc_components_on_GPU()
-            GMM.component_data_gpu_copy = None
         if GMM.component_data_cpu_copy is not None:
             self.get_asp_mod().dealloc_components_on_CPU()
             GMM.component_data_cpu_copy = None
+        if GMM.component_data_gpu_copy is not None:
+            self.get_asp_mod().dealloc_components_on_GPU()
+            GMM.component_data_gpu_copy = None
 
     def internal_alloc_eval_data(self, X):
         if X is not None:
-            if self.eval_data.M != self.M or self.eval_data.N != X.shape[0] or GMM.eval_data_gpu_copy != self.eval_data:
-                if GMM.eval_data_gpu_copy is not None:
+            if self.eval_data.M != self.M or self.eval_data.N != X.shape[0] or GMM.eval_data_cpu_copy != self.eval_data:
+                if GMM.eval_data_cpu_copy is not None:
                     self.internal_free_eval_data()
                 self.eval_data.resize(X.shape[0], self.M)
-                self.get_asp_mod().alloc_evals_on_GPU(X.shape[0], self.M)
                 self.get_asp_mod().alloc_evals_on_CPU(self.eval_data.memberships, self.eval_data.loglikelihoods)
-                GMM.eval_data_gpu_copy = self.eval_data
                 GMM.eval_data_cpu_copy = self.eval_data
+                if self.use_cuda:
+                    self.get_asp_mod().alloc_evals_on_GPU(X.shape[0], self.M)
+                    GMM.eval_data_gpu_copy = self.eval_data
             
     def internal_free_eval_data(self):
-        if GMM.eval_data_gpu_copy is not None:
-            self.get_asp_mod().dealloc_evals_on_GPU()
-            GMM.eval_data_gpu_copy = None
         if GMM.eval_data_cpu_copy is not None:
             self.get_asp_mod().dealloc_evals_on_CPU()
             GMM.eval_data_cpu_copy = None
+        if GMM.eval_data_gpu_copy is not None:
+            self.get_asp_mod().dealloc_evals_on_GPU()
+            GMM.eval_data_gpu_copy = None
 
     def __init__(self, M, D, means=None, covars=None, weights=None, names_of_backends_to_use=['cuda'], variant_param_spaces=None, device_id=0): #TODO: Make default backend 'base'
         self.M = M
@@ -251,6 +262,7 @@ class GMM(object):
 
         self.use_cuda = False
         self.use_cilk = False
+        self.device = None
         if 'cuda' in names_of_backends_to_use:
             self.use_cuda = True
             if GMM.device_id == None:
@@ -309,19 +321,27 @@ class GMM(object):
         # Create ASP module
         GMM.asp_mod = asp_module.ASPModule(use_cuda=self.use_cuda, use_cilk=self.use_cilk)
 
+        base_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp']
+        for header in base_system_header_names: 
+            GMM.asp_mod.add_to_preamble([Include(header, True)], 'base')
+        GMM.asp_mod.add_to_module([Line("""void boost_test(pyublas::numpy_vector<float> in, int a){ float* f = in.data().data(); a+=20; printf("TEST %d",a);}""")],'base')
+        GMM.asp_mod.add_helper_function('boost_test', 'base')
+
         if self.use_cuda:
             self.insert_base_code_into_listed_modules(['cuda_boost'])
             self.insert_non_rendered_code_into_cuda_module()
-            self.insert_rendered_code_into_module('cuda')
+            self.insert_rendered_code_into_module('cuda_boost')
             GMM.asp_mod.backends['cuda'].codepy_toolchain.cc = 'gcc'
             GMM.asp_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
             GMM.asp_mod.backends['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC","-arch=sm_%s%s" % self.capability ])
             GMM.asp_mod.backends['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
 
         if self.use_cilk:
-            self.insert_base_code_into_listed_modules(['cilk'])
+            self.insert_base_code_into_listed_modules(['cilk_boost'])
             self.insert_non_rendered_code_into_cilk_module()
-            self.insert_rendered_code_into_module('cilk')
+            self.insert_rendered_code_into_module('cilk_boost')
+            GMM.asp_mod.backends['cilk'].codepy_toolchain.cc = 'icc'
+            GMM.asp_mod.backends['cilk'].codepy_toolchain.cflags = ['-O2','-gcc', '-ip','-fPIC']
 
         # Setup toolchain and compile
 
@@ -330,7 +350,6 @@ class GMM(object):
             mod.codepy_toolchain.add_library("project",['.','./include'],[],[])
             add_pyublas(mod.codepy_toolchain)
             add_numpy(mod.codepy_toolchain)
-
         
         #print GMM.asp_mod.backends['cuda'].codepy_module.boost_module.generate()
         GMM.asp_mod.compile_all()
@@ -352,9 +371,12 @@ class GMM(object):
                 float* Rinv;   // Inverse of covariance matrix: [M*D*D]
             } components_t;"""
         names_of_helper_funcs = ["alloc_events_on_CPU", "alloc_components_on_CPU", "alloc_evals_on_CPU", "dealloc_events_on_CPU", "dealloc_components_on_CPU", "dealloc_temp_components_on_CPU", "dealloc_evals_on_CPU", "get_temp_component_pi", "get_temp_component_means", "get_temp_component_covars", "relink_components_on_CPU", "compute_distance_rissanen", "merge_components" ]
+        base_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp']
         for mname in names_of_modules:
             for fname in names_of_helper_funcs:
                 GMM.asp_mod.add_helper_function(fname, mname)
+            for header in base_system_header_names: 
+                GMM.asp_mod.add_to_preamble([Include(header, True)], mname)
             #Add Boost interface links for components and distance objects
             GMM.asp_mod.add_to_init("""boost::python::class_<components_struct>("Components");
                 boost::python::scope().attr("components") = boost::python::object(boost::python::ptr(&components));""", mname)
@@ -382,7 +404,7 @@ class GMM(object):
         GMM.asp_mod.add_to_preamble(component_t_decl,'cuda')
 
         #Add necessary headers
-        host_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h', 'pyublas/numpy.hpp', 'cuda_runtime.h']
+        host_system_header_names = ['cuda_runtime.h']
         for x in host_system_header_names: 
             GMM.asp_mod.add_to_preamble([Include(x, True)],'cuda_boost')
 
@@ -398,6 +420,28 @@ class GMM(object):
         for fname in names_of_helper_funcs:
             GMM.asp_mod.add_helper_function(fname,'cuda_boost')
 
+    def insert_non_rendered_code_into_cilk_module(self):
+        component_t_decl =""" 
+            typedef struct components_struct {
+                float* N;        // expected # of pixels in component: [M]
+                float* pi;       // probability of component in GMM: [M]
+                float* constant; // Normalizing constant [M]
+                float* avgvar;    // average variance [M]
+                float* means;   // Spectral mean for the component: [M*D]
+                float* R;      // Covariance matrix: [M*D*D]
+                float* Rinv;   // Inverse of covariance matrix: [M*D*D]
+            } components_t;"""
+        GMM.asp_mod.add_to_preamble(component_t_decl,'cilk')
+        cilk_base_tpl = AspTemplate.Template(filename="templates/em_cilk_helper_funcs.mako")
+        cilk_base_rend = cilk_base_tpl.render()
+        GMM.asp_mod.add_to_module([Line(cilk_base_rend)],'cilk')
+
+        #Add Cilk source code that is not based on code variant parameters
+        base_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h']
+        system_header_names = ['cilk/cilk.h','cilk/reducer_opadd.h']  
+        for x in base_system_header_names+system_header_names: 
+            GMM.asp_mod.add_to_preamble([Include(x, True)],'cilk')
+
     def render_and_add_to_module( self, param_dict, limit_generator, render_backend_specific_funcs, backend_name):
         # Evaluate whether these particular parameters can be compiled on this particular device
         can_be_compiled, comparison_function_for_input_args = limit_generator(param_dict, self.device)
@@ -407,15 +451,16 @@ class GMM(object):
         param_names.sort()
         vals = map(param_dict.get, param_names)
         # Use vals to render templates 
-        c_train_tpl = AspTemplate.Template(filename="templates/em_"+backend_name+"_train.mako")
-        c_eval_tpl = AspTemplate.Template(filename="templates/em_"+backend_name+"_eval.mako")
+        backend_filename = backend_name[:-6] if backend_name.endswith('_boost') else backend_name
+        c_train_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_train.mako")
+        c_eval_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_eval.mako")
         c_train_rend  = c_train_tpl.render( param_val_list = vals, **param_dict)
         c_eval_rend  = c_eval_tpl.render( param_val_list = vals, **param_dict)
 
         def var_name_generator(base):
-            return '_'.join(['em',backend_name,base]+vals)
+            return '_'.join(['em',backend_filename,base]+vals)
         def dummy_func_body_gen(base):
-            return "void "+var_name_generator(base)+"(int m, int d, int n, pyublas::numpy_array<float> data){}"
+            return "void "+var_name_generator(base)+"(int m, int d, int n, pyublas::numpy_vector<float> data){}"
 
         key_func = lambda name, *args, **kwargs: (name, args[0], args[1], args[2])
         if can_be_compiled: 
@@ -434,7 +479,7 @@ class GMM(object):
                                                 [comparison_function_for_input_args],
                                                 [can_be_compiled],
                                                 param_names,
-                                                'cuda_boost' if backend_name == 'cuda' else backend_name
+                                                backend_name
                                               )
         GMM.asp_mod.add_function_with_variants( [eval_body], 
                                                 'eval', 
@@ -444,7 +489,7 @@ class GMM(object):
                                                 [comparison_function_for_input_args],
                                                 [can_be_compiled],
                                                 param_names,
-                                                'cuda_boost' if backend_name == 'cuda' else backend_name
+                                                backend_name
                                               )
 
 
@@ -494,7 +539,7 @@ class GMM(object):
         self.internal_alloc_event_data(input_data)
         self.internal_alloc_eval_data(input_data)
         self.internal_alloc_component_data()
-        self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, N, input_data)[0]
+        self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, N)[0]
         return self
 
     def eval(self, obs_data):
@@ -504,7 +549,7 @@ class GMM(object):
         self.internal_alloc_event_data(obs_data)
         self.internal_alloc_eval_data(obs_data)
         self.internal_alloc_component_data()
-        self.eval_data.likelihood = self.get_asp_mod().eval(self.M, self.D, N, obs_data)
+        self.eval_data.likelihood = self.get_asp_mod().eval(self.M, self.D, N)
         logprob = self.eval_data.loglikelihoods
         posteriors = self.eval_data.memberships
         return logprob, posteriors # N log probabilities, NxM posterior probabilities for each component
