@@ -85,7 +85,7 @@ if __name__ == '__main__':
     device_id = 0
     num_subplots = 5
     variant_param_spaces = {'base': {},
-            'cuda': {'num_blocks_estep': ['16'],
+            'cuda_boost': {'num_blocks_estep': ['16'],
                 'num_threads_estep': ['512'],
                 'num_threads_mstep': ['512'],
                 'num_event_blocks': ['128'],
@@ -97,7 +97,7 @@ if __name__ == '__main__':
                 'max_iters': ['10'],
                 'min_iters': ['10'],
                 'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
-            'cilk': {}
+            'cilk_boost': {}
     }
     emt = EMTester(False, variant_param_spaces, num_subplots, device_id, ['cuda'])
     emt.new_gmm(3)

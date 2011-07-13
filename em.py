@@ -281,11 +281,12 @@ class GMM(object):
     def initialize_gpu_util_mod(self):
         GMM.gpu_util_mod = asp_module.ASPModule(use_cuda=True)
         GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cc = 'gcc'
-        GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
+        #GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
         GMM.gpu_util_mod.backends['cuda'].codepy_toolchain.cc = 'gcc'
-        GMM.gpu_util_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
-        GMM.gpu_util_mod.backends['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC"])
-        GMM.gpu_util_mod.backends['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
+        #GMM.gpu_util_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.gpu_util_mod.backends['cuda'].extension_toolchain.cc = 'nvcc'
+        #GMM.gpu_util_mod.backends['cuda'].extension_toolchain.cflags.extend(["-Xcompiler","-fPIC"])
+        GMM.gpu_util_mod.backends['cuda'].extension_toolchain.add_library("project",['.','./include'],[],[])  
 
         #TODO: Figure out what kind of file to put this in
         #TODO: Or, redo these using more robust functionality stolen from PyCuda
@@ -332,9 +333,11 @@ class GMM(object):
             self.insert_non_rendered_code_into_cuda_module()
             self.insert_rendered_code_into_module('cuda_boost')
             GMM.asp_mod.backends['cuda'].codepy_toolchain.cc = 'gcc'
-            GMM.asp_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
-            GMM.asp_mod.backends['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC","-arch=sm_%s%s" % self.capability ])
-            GMM.asp_mod.backends['cuda'].nvcc_toolchain.add_library("project",['.','./include'],[],[])  
+            #GMM.asp_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
+            GMM.asp_mod.backends['cuda'].extension_toolchain.cc = 'nvcc'
+            #GMM.asp_mod.backends['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC","-arch=sm_%s%s" % self.capability ])
+            GMM.asp_mod.backends['cuda'].extension_toolchain.cflags.extend(["-arch=sm_%s%s" % self.capability ])
+            GMM.asp_mod.backends['cuda'].extension_toolchain.add_library("project",['.','./include'],[],[])  
 
         if self.use_cilk:
             self.insert_base_code_into_listed_modules(['cilk_boost'])
