@@ -1,5 +1,32 @@
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
+#include <stdio.h>
+#define MINVALUEFORMINUSLOG -1000.0f
+#define MIN_VARIANCE 0.01
+
+__device__ float log_add(float log_a, float log_b) {
+
+  float result;
+  if(log_a < log_b)
+    {
+      float tmp = log_a;
+      log_a = log_b;
+      log_b = tmp;
+    }
+  //setting MIN...LOG so small, I don't even need to look
+  if((log_b - log_a) <= MINVALUEFORMINUSLOG)
+    {
+      return log_a;
+    }
+  else
+    {
+      result = log_a + (float)(logf(1.0 + (double)(expf((double)(log_b - log_a)))));
+    }
+  return result;
+
+}
+
+
 
 /*
  * Compute the multivariate mean of the FCS data
