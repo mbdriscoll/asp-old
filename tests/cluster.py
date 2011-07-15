@@ -506,7 +506,7 @@ if __name__ == '__main__':
                                            'diag_only': ['1'],
                                            'max_iters': [num_em_iters],
                                            'min_iters': ['1'],
-                                           'covar_version_name': ['V2B'] },
+                                           'covar_version_name': ['V1', 'V2A', 'V2B'] },
                             'cilk_boost': {}
                             }
 
