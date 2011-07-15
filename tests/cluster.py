@@ -267,7 +267,6 @@ class EMTester(object):
         for g, x in init_training:
             g.train(x)
 
-        print NUM_SEG_LOOPS_INIT
         # ----------- First majority vote segmentation loop ---------
         for segment_iter in range(0,NUM_SEG_LOOPS_INIT):
             iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote()
@@ -309,11 +308,11 @@ class EMTester(object):
                         d2 = iter_bic_dict[gmm2idx]
                         data = np.concatenate((d1,d2))
                     elif gmm1idx in iter_bic_dict:
-                        data = d1
+                        data = iter_bic_dict[gmm1idx]
                     else:
-                        data = d2
+                        data = iter_bic_dict[gmm2idx]
 
-                    new_gmm, score, tt = compute_distance_BIC(g1, g2, data)
+                    new_gmm, score = compute_distance_BIC(g1, g2, data)
                     
                     #print "Comparing BIC %d with %d: %f" % (gmm1idx, gmm2idx, score)
                     if score > best_BIC_score: 
@@ -332,7 +331,7 @@ class EMTester(object):
                         g2, d2 = iter_bic_list[gmm2idx] 
 
                         data = np.concatenate((d1,d2))
-                        new_gmm, score, tt = compute_distance_BIC(g1, g2, data)
+                        new_gmm, score = compute_distance_BIC(g1, g2, data)
                                                 
                         #print "Comparing BIC %d with %d: %f" % (gmm1idx, gmm2idx, score)
                         if score > best_BIC_score: 
@@ -357,7 +356,7 @@ class EMTester(object):
         return most_likely
 
 def print_usage():
-    print """    ---------------------------------------------
+        print """    ---------------------------------------------
     Speaker Diarization in Python with ASP usage:
     ---------------------------------------------
     Arguments for the diarizer are parsed from a config file. 
@@ -373,15 +372,19 @@ def print_usage():
 
     --- Optional: ---
     spnsp_file: \t spnsp file (all features used by default)
-    KL_ntop: \t Nuber of combinations to evaluate BIC on, 0 to deactive KL-divergency (fastmatch-component)
-    em_iterations: \t Number of iterations for the standard segmentation loop training (3 by default)
-    num_seg_iters_init: \t Number of majority vote iterations in the initialization phase (2 by default)
-    num_seg_iters: \t Number of majority vote iterations in the main loop (3 by default)
+    KL_ntop: \t Nuber of combinations to evaluate BIC on
+            \t 0 to deactive KL-divergency (fastmatch-component)
+    em_iterations: \t Number of iterations for the standard
+                  \t segmentation loop training (3 by default)
+    num_seg_iters_init: \t Number of majority vote iterations
+                        \t in the initialization phase (2 by default)
+    num_seg_iters: \t Number of majority vote iterations
+                   \t in the main loop (3 by default)
 
-    For fastest performance, enable KL-divergency (KL_ntop = 3) and set num_seg_iters_init and num_seg_iters to 1
+    For fastest performance, enable KL-divergency (KL_ntop = 3) and set
+      \t num_seg_iters_init and num_seg_iters to 1
     """
-    
-    
+
     
 def print_no_config():
 
@@ -500,10 +503,10 @@ if __name__ == '__main__':
                                            'max_num_components': ['122'],
                                            'max_num_dimensions_covar_v3': ['40'],
                                            'max_num_components_covar_v3': ['82'],
-                                           'diag_only': ['0'],
-                                           'max_iters': ['10'],
-                                           'min_iters': ['10'],
-                                           'covar_version_name': ['V1'] },
+                                           'diag_only': ['1'],
+                                           'max_iters': [num_em_iters],
+                                           'min_iters': ['1'],
+                                           'covar_version_name': ['V2B'] },
                             'cilk_boost': {}
                             }
 

@@ -623,14 +623,11 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     int tid = threadIdx.x; // easier variable name for our thread ID
     int row,col,c;
     compute_row_col(num_dimensions, &row, &col);
-
-    __syncthreads();
-    
     c = blockIdx.x; // Determines what component this block is handling    
 
     int matrix_index = row * num_dimensions + col;
 
-    #if ${diag_only}
+#if ${diag_only}
     if(row!=col) {
       components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
       matrix_index = col*num_dimensions+row;
@@ -638,8 +635,8 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
       return;
       
     }
-    #endif
-    
+#endif
+
     // Store the means of this component in shared memory
     __shared__ float means[${max_num_dimensions}];
     if(tid < num_dimensions) {
@@ -650,45 +647,32 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     __shared__ float temp_sums[${num_threads_mstep}];
     
     float cov_sum = 0.0f;
-
     for(int event=tid; event < num_events; event+=${num_threads_mstep}) {
       cov_sum += (fcs_data[row*num_events+event]-means[row])*(fcs_data[col*num_events+event]-means[col])*component_memberships[c*num_events+event];
     }
     temp_sums[tid] = cov_sum;
 
     __syncthreads();
-
+    
+    parallelSum(temp_sums);
     if(tid == 0) {
-      cov_sum = 0.0f;
-      for(int i=0; i < ${num_threads_mstep}; i++) {
-        cov_sum += temp_sums[i];
-      }
+      cov_sum = temp_sums[0];
       if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
         cov_sum /= components->N[c];
-        if(cov_sum <= MIN_VARIANCE)
-          cov_sum = MIN_VARIANCE;
         components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
-        // Set the symmetric value
         matrix_index = col*num_dimensions+row;
         components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
       } else {
-        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance be for an empty cluster...?
-        // Set the symmetric value
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; 
         matrix_index = col*num_dimensions+row;
-        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f; // what should the variance b foran empty cluster...?
-                   }
-
-      // Regularize matrix - adds some variance to the diagonal elements
-      // Helps keep covariance matrix non-singular (so it can be inverted)
-      // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
-         if(row == col) {
-           components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
-           if(components->R[c*num_dimensions*num_dimensions+matrix_index]  <= MIN_VARIANCE)
-             components->R[c*num_dimensions*num_dimensions+matrix_index]  = MIN_VARIANCE;
-         }
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+      }
+      if(row == col) {
+        components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
+      }
     }
-    
- }
+}
+
 
 void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, ${tempbuff_type_name}* temp_buffer_2b)
 {
@@ -761,10 +745,6 @@ void mstep_covar_launch_idx${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_
 
 %elif covar_version_name.upper() in ['2','2A','V2','V2A','_V2','_V2A']:
 
-/*
- * Computes the covariance matrices of the data (R matrix)
- * Must be launched with a M blocks and D x D/2 threads: 
- */
 __global__ void
 mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events) {
     int tid = threadIdx.x; // easier variable name for our thread ID
@@ -776,19 +756,6 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     c = blockIdx.x; // Determines what component this block is handling    
 
     int matrix_index = row * num_dimensions + col;
-
-    //DIAGONAL
-#if ${diag_only}
-    if(row!=col) {
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-      matrix_index = col*num_dimensions+row;
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-      return;
-      
-    }
-#endif
-    //END DIAGONAL
-    
     // Store the means in shared memory to speed up the covariance computations
     __shared__ float means[${max_num_dimensions}];
     if(tid < num_dimensions) {
@@ -807,10 +774,18 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     __syncthreads();
 
     if(tid < num_dimensions*(num_dimensions+1)/2) {
+
+#if ${diag_only}
+      if(row!=col) {
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        matrix_index = col*num_dimensions+row;
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        return;      
+      }
+#endif
+
         if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
           cov_sum /= components->N[c];
-          if(cov_sum <= MIN_VARIANCE)
-            cov_sum = MIN_VARIANCE;
           components->R[c*num_dimensions*num_dimensions+matrix_index] = cov_sum;
           // Set the symmetric value
           matrix_index = col*num_dimensions+row;
@@ -827,17 +802,18 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
         // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
         if(row == col) {
           components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
-          if(components->R[c*num_dimensions*num_dimensions+matrix_index] <= MIN_VARIANCE)
-            components->R[c*num_dimensions*num_dimensions+matrix_index] = MIN_VARIANCE;
         }
     }   
 }
+
 
 
 void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, ${tempbuff_type_name}* temp_buffer_2b)
 {
   int num_threads = num_dimensions*(num_dimensions+1)/2;
   mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_components, num_threads>>>(d_fcs_data_by_event,d_components,d_component_memberships,num_dimensions,num_components,num_events);
+
+  compute_CP${'_'+'_'.join(param_val_list)}<<<num_components, ${num_threads_estep}>>>(d_components, num_dimensions);
 }
 
 __global__ void
@@ -912,8 +888,10 @@ void mstep_covar_launch_idx${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_
  * B is the number of event blocks (N/events_per_block)
  */
 
- __global__ void
+__global__ void
 mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events, int event_block_size, int num_b, ${tempbuff_type_name}* temp_buffer) {
+  //mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events, int event_block_size, int num_b, float *temp_buffer) {
+
   int tid = threadIdx.x; // easier variable name for our thread ID
     
     // Determine what row,col this matrix is handling, also handles the symmetric element
@@ -924,19 +902,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     compute_my_event_indices(num_events, event_block_size, num_b, &e_start, &e_end);
     c = blockIdx.x; // Determines what component this block is handling    
     int matrix_index = row * num_dimensions + col;
-        //DIAGONAL
-#if ${diag_only}
-    if(row!=col) {
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-      matrix_index = col*num_dimensions+row;
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-      return;
-      
-    }
-#endif
-    //END DIAGONAL
 
-    
     // Store the means in shared memory to speed up the covariance computations
     __shared__ float means[${max_num_dimensions}];
     __shared__ float myR[${max_num_dimensions}*${max_num_dimensions}];
@@ -955,26 +921,33 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
         }
 
         myR[matrix_index] = cov_sum;
-     
-%if supports_32b_floating_point_atomics != '0':
-        float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
+%if supports_32b_floating_point_atomics != '0':      
+
+        float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]);
 %else:
-        int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), ToFixedPoint(myR[matrix_index]));
+        float log_temp = log(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
+        float log_myR = log(myR[matrix_index]);
+        int fixp_temp = floor(log_temp*1000000);
+        int fixp_myR = floor(log_myR*1000000);
+        int fixp_old = atomicAdd(&fixp_temp, fixp_myR);
+        float old = exp((float)fixp_old/1000000);
 %endif
     }
 
     __syncthreads();
 
     if(tid < num_dimensions*(num_dimensions+1)/2) {
+#if ${diag_only}
+      if(row!=col) {
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        matrix_index = col*num_dimensions+row;
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        return;      
+      }
+#endif
       if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
-%if supports_32b_floating_point_atomics != '0':
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
-%else:
-        float cs = ToFloatPoint(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
-%endif
         cs /= components->N[c];
-        if(cs <= MIN_VARIANCE)
-          cs = MIN_VARIANCE;
         components->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
         // Set the symmetric value
         matrix_index = col*num_dimensions+row;
@@ -991,20 +964,21 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
       // The amount added is scaled down based on COVARIANCE_DYNAMIC_RANGE constant defined at top of this file
       if(row == col) {
         components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
-        if(components->R[c*num_dimensions*num_dimensions+matrix_index] <= MIN_VARIANCE)
-          components->R[c*num_dimensions*num_dimensions+matrix_index] = MIN_VARIANCE;
       }
     }
 }
  
 void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dimension, float* d_fcs_data_by_event, components_t* d_components, float* d_component_memberships, int num_dimensions, int num_components, int num_events, ${tempbuff_type_name}* temp_buffer_2b)
+
 {
   int num_event_blocks = ${num_event_blocks};
   int event_block_size = num_events%${num_event_blocks} == 0 ? num_events/${num_event_blocks}:num_events/(${num_event_blocks}-1);
   dim3 gridDim2(num_components,num_event_blocks);
   int num_threads = num_dimensions*(num_dimensions+1)/2;
   mstep_covariance${'_'+'_'.join(param_val_list)}<<<gridDim2, num_threads>>>(d_fcs_data_by_event,d_components,d_component_memberships,num_dimensions,num_components,num_events, event_block_size, num_event_blocks, temp_buffer_2b);
+  compute_CP${'_'+'_'.join(param_val_list)}<<<num_components, ${num_threads_estep}>>>(d_components, num_dimensions);
 }
+
 
 __global__ void
 mstep_covariance_idx${'_'+'_'.join(param_val_list)}(float* fcs_data, int* indices, int num_indices, components_t* components, float* component_memberships, int num_dimensions, int num_components, int num_events, int event_block_size, int num_b, ${tempbuff_type_name}* temp_buffer) {
