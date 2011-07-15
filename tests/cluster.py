@@ -42,7 +42,6 @@ class EMTester(object):
         if from_file:
 
             f = open(f_file_name, "rb")
-            sp = open(sp_file_name, "r")
 
             print "Reading in HTK feature file..."
 
@@ -69,43 +68,52 @@ class EMTester(object):
 
             #=== Prune to Speech Only ==
             print "Reading in speech/nonspeech file..."
-            
-            l_start = []
-            l_end = []
-            num_speech_frames = 0
-            for line in sp:
-                s = line.split(' ')
-                st = math.floor(100 * float(s[2]) + 0.5)
-                en = math.floor(100 * float(s[3].replace('\n','')) + 0.5)
-                st1 = int(st)
-                en1 = int(en)
-                l_start.append(st1*19)
-                l_end.append(en1*19)
-                num_speech_frames = num_speech_frames + (en1 - st1 + 1)
-
-            print "Total number of speech frames: ", num_speech_frames
             pruned_list = []
-            total = 0
-            for start in l_start:
-                end = l_end[l_start.index(start)]
-                total += (end/19 - start/19 + 1)
-                x = 0
-                index = start
-                while x < (end-start+19):
-                    pruned_list.append(l[index])
-                    index += 1
-                    x += 1
+            num_speech_frames = nSamples            
+
+            if sp_file_name:
+                sp = open(sp_file_name, "r")
+                        
+                l_start = []
+                l_end = []
+                num_speech_frames = 0
+                for line in sp:
+                    s = line.split(' ')
+                    st = math.floor(100 * float(s[2]) + 0.5)
+                    en = math.floor(100 * float(s[3].replace('\n','')) + 0.5)
+                    st1 = int(st)
+                    en1 = int(en)
+                    l_start.append(st1*19)
+                    l_end.append(en1*19)
+                    num_speech_frames = num_speech_frames + (en1 - st1 + 1)
+
+                print "Total number of speech frames: ", num_speech_frames
+
+                total = 0
+                for start in l_start:
+                    end = l_end[l_start.index(start)]
+                    total += (end/19 - start/19 + 1)
+                    x = 0
+                    index = start
+                    while x < (end-start+19):
+                        pruned_list.append(l[index])
+                        index += 1
+                        x += 1
+            else: #no speech file, take in all features
+                pruned_list = l
 
             floatArray = np.array(pruned_list, dtype = np.float32)
             self.X = floatArray.reshape(num_speech_frames, D)
             
             self.N = self.X.shape[0]
             self.D = self.X.shape[1]
+
         else:
             N = 1000
             self.X = generate_synthetic_data(N)
             self.N = self.X.shape[0]
             self.D = self.X.shape[1]
+
 
     def write_to_RTTM(self, rttm_file_name, sp_file_name, meeting_name, most_likely, num_gmms):
 
@@ -140,31 +148,34 @@ class EMTester(object):
         out_file = open(rttm_file_name, 'w')
 
         with_non_speech = -1*np.ones(self.total_num_frames)
-        
-        speech_seg = np.loadtxt(sp_file_name, delimiter=' ',usecols=(2,3))
-        speech_seg_i = np.round(speech_seg*100).astype('int32')
-        sizes = np.diff(speech_seg_i)
-        
-        sizes = sizes.reshape(sizes.size)
-        offsets = np.cumsum(sizes)
-        offsets = np.hstack((0, offsets[0:-1]))
 
-        offsets += np.array(range(len(offsets)))
+        if sp_file_name:
+            speech_seg = np.loadtxt(sp_file_name, delimiter=' ',usecols=(2,3))
+            speech_seg_i = np.round(speech_seg*100).astype('int32')
+            sizes = np.diff(speech_seg_i)
+        
+            sizes = sizes.reshape(sizes.size)
+            offsets = np.cumsum(sizes)
+            offsets = np.hstack((0, offsets[0:-1]))
+
+            offsets += np.array(range(len(offsets)))
         
         #populate the array with speech clusters
-        speech_index = 0
-        counter = 0
-        for pair in speech_seg_i:
-            st = pair[0]
-            en = pair[1]
-            speech_index = offsets[counter]
-
-            counter+=1
-            idx = 0
-            for x in range(st+1, en+1):
-                with_non_speech[x] = most_likely[speech_index+idx]
-                idx += 1
-
+            speech_index = 0
+            counter = 0
+            for pair in speech_seg_i:
+                st = pair[0]
+                en = pair[1]
+                speech_index = offsets[counter]
+                
+                counter+=1
+                idx = 0
+                for x in range(st+1, en+1):
+                    with_non_speech[x] = most_likely[speech_index+idx]
+                    idx += 1
+        else:
+            with_non_speech = most_likely
+            
         cnum = with_non_speech[0]
         cst  = 0
         cen  = 0
