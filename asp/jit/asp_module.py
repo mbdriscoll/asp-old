@@ -34,6 +34,7 @@ class InternalModule(object):
 
     def compile(self):
         if not self.compilable: return None
+        self.dirty = False
         if self.name == 'cilk':
             #Deal with linking in functions with boost compiled with gcc
             host_code = str(self.boost_module.generate()) + "\n"
@@ -69,13 +70,11 @@ class InternalModule(object):
                   ret = link_extension(host_toolchain,
                                         [host_object, device_object],
                                         host_mod_name)
-            print repr(ret)
             return ret
         elif self.name =='cuda':
 	    return self.extension_module.compile(self.boost_toolchain, self.extension_toolchain, cache_dir=self.cache_dir)
         else:
 	    return self.codepy_module.compile(self.codepy_toolchain, cache_dir=self.cache_dir)
-        self.dirty = False
 
 class ASPModule(object):
 
