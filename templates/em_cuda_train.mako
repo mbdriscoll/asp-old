@@ -1,5 +1,5 @@
 <%
-tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0' else 'float'
+tempbuff_type_name = 'int' if supports_32b_floating_point_atomics == '0' else 'float'
 %>
 
 boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (

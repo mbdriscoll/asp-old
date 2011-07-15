@@ -1,14 +1,12 @@
 <%
-tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0' else 'float'
+tempbuff_type_name = 'int' if supports_32b_floating_point_atomics == '0' else 'float'
 %>
 
 boost::python::tuple em_cuda_train_on_subset${'_'+'_'.join(param_val_list)} (
                              int num_components, 
                              int num_dimensions, 
                              int num_events,
-                             int num_indices,
-                             pyublas::numpy_array<float> input_data,
-                             pyublas::numpy_array<int> index_list)
+                             int num_indices)
                              
 {
   

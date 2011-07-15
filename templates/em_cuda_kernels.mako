@@ -1,5 +1,5 @@
 <%
-tempbuff_type_name = 'unsigned int' if supports_32b_floating_point_atomics == '0' else 'float'
+tempbuff_type_name = 'int' if supports_32b_floating_point_atomics == '0' else 'float'
 %>
 
 #include <stdio.h>
@@ -92,6 +92,40 @@ __device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data,
     }
 }
 
+__global__ void compute_CP${'_'+'_'.join(param_val_list)}(components_t* components, int num_dimensions) {
+
+  __shared__ ${tempbuff_type_name} temp_sum;
+  int c = blockIdx.x; //component number
+  int tid = threadIdx.x; //thread id
+  int num_threads = blockDim.x;
+  int num_elements = num_dimensions*num_dimensions;
+  int row, col;
+
+  if(tid == 0){
+    components->CP[c] = 0.0f;
+    temp_sum = 0;
+  }
+
+  __syncthreads();
+  
+  for(int d = tid; d<num_elements; d+=num_threads) {
+     row = (d) / num_dimensions; 
+     col = (d) % num_dimensions; 
+
+%if supports_32b_floating_point_atomics != '0':
+     if(row==col) {
+         float old  = atomicAdd(&(components->CP[c]), logf(2*3.141592654*components->R[c*num_dimensions*num_dimensions + row*num_dimensions+col]));
+     }
+%else:
+     if(row==col) {
+         int old_int = atomicAdd(&(temp_sum), 
+         				  ToFixedPoint(logf(2*3.141592654*components->R[c*num_dimensions*num_dimensions + row*num_dimensions+col])));
+     }
+     __syncthreads();
+     if(tid == 0) components->CP[c] = ToFloatPoint(temp_sum);
+%endif
+  }
+}
 
 __device__ void compute_constants${'_'+'_'.join(param_val_list)}(components_t* components, int num_components, int num_dimensions) {
     int tid = threadIdx.x;
@@ -147,7 +181,7 @@ __device__ void compute_constants${'_'+'_'.join(param_val_list)}(components_t* c
 ////////////////////////////////////////////////////////////////////////////////
 
 __global__ void
-seed_components( float* fcs_data, components_t* components, int num_dimensions, int num_components, int num_events)
+seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* components, int num_dimensions, int num_components, int num_events)
 {
     // access thread id
     int tid = threadIdx.x;
@@ -212,31 +246,6 @@ seed_components( float* fcs_data, components_t* components, int num_dimensions, 
 
 }
   
-__global__ void compute_CP(components_t* components, int num_dimensions) {
-
-  int c = blockIdx.x; //component number
-  int tid = threadIdx.x; //thread id
-  int num_threads = blockDim.x;
-  int num_elements = num_dimensions*num_dimensions;
-  int row, col;
-
-  if(tid == 0){
-    components->CP[c] = 0.0f;
-  }
-
-  __syncthreads();
-  
-  for(int d = tid; d<num_elements; d+=num_threads) {
-     row = (d) / num_dimensions; 
-     col = (d) % num_dimensions; 
-
-     if(row==col) {
-         float old  = atomicAdd(&(components->CP[c]), logf(2*3.141592654*components->R[c*num_dimensions*num_dimensions + row*num_dimensions+col]));
-     }
-  }
-}
-
-
 __device__ void compute_indices${'_'+'_'.join(param_val_list)}(int num_events, int* start, int* stop) {
     // Break up the events evenly between the blocks
     int num_pixels_per_block = num_events / ${num_blocks_estep};
@@ -686,7 +695,7 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
   dim3 gridDim2(num_components,num_dimensions*(num_dimensions+1)/2);
   mstep_covariance${'_'+'_'.join(param_val_list)}<<<gridDim2, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events);
 
-  compute_CP<<<num_components, ${num_threads_estep}>>>(d_components, num_dimensions);
+  compute_CP${'_'+'_'.join(param_val_list)}<<<num_components, ${num_threads_estep}>>>(d_components, num_dimensions);
 }
 
 __global__ void
@@ -950,8 +959,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 %if supports_32b_floating_point_atomics != '0':
         float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
 %else:
-        unsigned int fixp_myR = (unsigned int)floor((myR[matrix_index])*1000000.0f);
-        unsigned int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), fixp_myR); 
+        int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), ToFixedPoint(myR[matrix_index]));
 %endif
     }
 
@@ -962,7 +970,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 %if supports_32b_floating_point_atomics != '0':
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
 %else:
-        float cs = (((float)temp_buffer[c*num_dimensions*num_dimensions+matrix_index])/1000000.0f);
+        float cs = ToFloatPoint(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
 %endif
         cs /= components->N[c];
         if(cs <= MIN_VARIANCE)
@@ -1039,8 +1047,7 @@ mstep_covariance_idx${'_'+'_'.join(param_val_list)}(float* fcs_data, int* indice
 %if supports_32b_floating_point_atomics != '0':
         float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]); 
 %else:
-        unsigned int fixp_myR = (unsigned int)floor((myR[matrix_index])*1000000.0f);
-        unsigned int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), fixp_myR); 
+        int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), ToFixedPoint(myR[matrix_index]));
 %endif
     }
 
@@ -1051,7 +1058,7 @@ mstep_covariance_idx${'_'+'_'.join(param_val_list)}(float* fcs_data, int* indice
 %if supports_32b_floating_point_atomics != '0':
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
 %else:
-        float cs = (((float)temp_buffer[c*num_dimensions*num_dimensions+matrix_index])/1000000.0f);
+        float cs = ToFloatPoint(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
 %endif
         cs /= components->N[c];
         components->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
@@ -1293,11 +1300,11 @@ mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, compo
     }
 }
 
-void seed_components_launch(float* d_fcs_data_by_event, components_t* d_components, int num_dimensions, int num_components, int num_events)
+void seed_components_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_event, components_t* d_components, int num_dimensions, int num_components, int num_events)
 {
   //printf("SEEDING\n");
-  seed_components<<< 1, 512>>>( d_fcs_data_by_event, d_components, num_dimensions, num_components, num_events);
-  compute_CP<<<num_components, 512>>>(d_components, num_dimensions);
+  seed_components${'_'+'_'.join(param_val_list)}<<< 1, 512>>>( d_fcs_data_by_event, d_components, num_dimensions, num_components, num_events);
+  compute_CP${'_'+'_'.join(param_val_list)}<<<num_components, 512>>>(d_components, num_dimensions);
   cudaThreadSynchronize();
 
 }

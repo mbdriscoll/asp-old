@@ -20,25 +20,25 @@ class DeviceCUDA10(DeviceParameters):
     def __init__(self):
         self.params = {}
         # Feature support
-        self.params['supports_32b_floating_point_atomics'] = 0
+        self.params['supports_32b_floating_point_atomics'] = '0'
         # Technical specifications
-        self.params['max_xy_grid_dim'] = 65535
-        self.params['max_threads_per_block'] = 512
-        self.params['max_shared_memory_capacity_per_SM'] = 16348
+        self.params['max_xy_grid_dim'] = '65535'
+        self.params['max_threads_per_block'] = '512'
+        self.params['max_shared_memory_capacity_per_SM'] = '16348'
         # Device parameters
-        self.params['max_gpu_memory_capacity'] = 1073741824
+        self.params['max_gpu_memory_capacity'] = '1073741824'
 
 class DeviceCUDA20(DeviceParameters):
     def __init__(self):
         self.params = {}
         # Feature support
-        self.params['supports_32b_floating_point_atomics'] = 1
+        self.params['supports_32b_floating_point_atomics'] = '1'
         # Technical specifications
-        self.params['max_xy_grid_dim'] = 65535
-        self.params['max_threads_per_block'] = 1024
-        self.params['max_shared_memory_capacity_per_SM'] = 16384*3
+        self.params['max_xy_grid_dim'] = '65535'
+        self.params['max_threads_per_block'] = '1024'
+        self.params['max_shared_memory_capacity_per_SM'] = str(16384*3)
         # Device parameters
-        self.params['max_gpu_memory_capacity'] = 1610612736
+        self.params['max_gpu_memory_capacity'] = '1610612736'
 
 class Components(object):
 
@@ -345,12 +345,10 @@ class GMM(object):
     def initialize_gpu_util_mod(self):
         GMM.gpu_util_mod = asp_module.ASPModule(use_cuda=True)
         GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cc = 'gcc'
-        #GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
+        GMM.gpu_util_mod.backends['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
         GMM.gpu_util_mod.backends['cuda'].codepy_toolchain.cc = 'gcc'
-        #GMM.gpu_util_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
         GMM.gpu_util_mod.backends['cuda'].extension_toolchain.cc = 'nvcc'
-        #GMM.gpu_util_mod.backends['cuda'].extension_toolchain.cflags.extend(["-Xcompiler","-fPIC"])
-        GMM.gpu_util_mod.backends['cuda'].extension_toolchain.add_library("project",['.','./include'],[],[])  
+        GMM.gpu_util_mod.backends['cuda'].extension_toolchain.cflags.extend(["-Xcompiler","-fPIC"])
 
         #TODO: Figure out what kind of file to put this in
         #TODO: Or, redo these using more robust functionality stolen from PyCuda
@@ -390,21 +388,17 @@ class GMM(object):
         base_system_header_names = [ 'stdlib.h', 'stdio.h', 'string.h', 'math.h', 'time.h','pyublas/numpy.hpp']
         for header in base_system_header_names: 
             GMM.asp_mod.add_to_preamble([Include(header, True)], 'base')
-        GMM.asp_mod.add_to_module([Line("""void boost_test(pyublas::numpy_vector<float> in, int a){ float* f = in.data().data(); a+=20; printf("TEST %d",a);}""")],'base')
-        GMM.asp_mod.add_helper_function('boost_test', 'base')
 
         if self.use_cuda:
             self.insert_base_code_into_listed_modules(['cuda_boost'])
             self.insert_non_rendered_code_into_cuda_module()
             self.insert_rendered_code_into_module('cuda_boost')
-            GMM.asp_mod.backends['cuda'].codepy_toolchain.cc = 'gcc'
-            #GMM.asp_mod.backends['cuda'].codepy_toolchain.cflags.append('-fPIC')
+            GMM.asp_mod.backends['cuda_boost'].codepy_toolchain.cc = 'gcc'
+            GMM.asp_mod.backends['cuda_boost'].codepy_toolchain.cflags.append('-fPIC')
+            GMM.asp_mod.backends['cuda'].boost_toolchain.cc = 'gcc'
             GMM.asp_mod.backends['cuda'].extension_toolchain.cc = 'nvcc'
-            #GMM.asp_mod.backends['cuda'].nvcc_toolchain.cflags.extend(["-Xcompiler","-fPIC","-arch=sm_%s%s" % self.capability ])
+            GMM.asp_mod.backends['cuda'].extension_toolchain.cflags[-1]+=",-fPIC"
             GMM.asp_mod.backends['cuda'].extension_toolchain.cflags.extend(["-arch=sm_%s%s" % self.capability ])
-            GMM.asp_mod.backends['cuda'].extension_toolchain.add_library("project",['.','./include'],[],[])  
-            print dir(GMM.asp_mod.backends['cuda'].extension_toolchain)
-            GMM.asp_mod.backends['cuda'].extension_toolchain.library_dirs.extend('/usr/local/cuda/lib64')
 
         if self.use_cilk:
             self.insert_base_code_into_listed_modules(['cilk_boost'])
@@ -489,7 +483,7 @@ class GMM(object):
         cu_base_rend = cu_base_tpl.render()
         GMM.asp_mod.add_to_module([Line(cu_base_rend)],'cuda')
         #Add Boost interface links for helper functions
-        names_of_helper_funcs = ["seed_components", "alloc_events_on_GPU","alloc_index_list_on_GPU", "alloc_events_from_index_on_GPU", "alloc_components_on_GPU","alloc_evals_on_GPU","copy_event_data_CPU_to_GPU", "copy_index_list_data_CPU_to_GPU", "copy_events_from_index_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_CPU_to_GPU", "copy_evals_data_GPU_to_CPU","dealloc_events_on_GPU","dealloc_components_on_GPU", "dealloc_evals_on_GPU", "dealloc_index_list_on_GPU"]
+        names_of_helper_funcs = ["alloc_events_on_GPU","alloc_index_list_on_GPU", "alloc_events_from_index_on_GPU", "alloc_components_on_GPU","alloc_evals_on_GPU","copy_event_data_CPU_to_GPU", "copy_index_list_data_CPU_to_GPU", "copy_events_from_index_CPU_to_GPU", "copy_component_data_CPU_to_GPU", "copy_component_data_GPU_to_CPU", "copy_evals_CPU_to_GPU", "copy_evals_data_GPU_to_CPU","dealloc_events_on_GPU","dealloc_components_on_GPU", "dealloc_evals_on_GPU", "dealloc_index_list_on_GPU"]
         for fname in names_of_helper_funcs:
             GMM.asp_mod.add_helper_function(fname,'cuda_boost')
 
@@ -527,8 +521,10 @@ class GMM(object):
         backend_filename = backend_name[:-6] if backend_name.endswith('_boost') else backend_name
         c_train_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_train.mako")
         c_eval_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_eval.mako")
+        c_seed_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_seed.mako")
         c_train_rend  = c_train_tpl.render( param_val_list = vals, **param_dict)
         c_eval_rend  = c_eval_tpl.render( param_val_list = vals, **param_dict)
+        c_seed_rend  = c_seed_tpl.render( param_val_list = vals, **param_dict)
 
         def var_name_generator(base):
             return '_'.join(['em',backend_filename,base]+vals)
@@ -540,9 +536,11 @@ class GMM(object):
             render_backend_specific_funcs(param_dict, vals)
             train_body = c_train_rend
             eval_body = c_eval_rend
+            seed_body = c_seed_rend
         else:
             train_body = dummy_func_body_gen('train')
             eval_body = dummy_func_body_gen('eval')
+            seed_body = dummy_func_body_gen('seed_components')
 
         GMM.asp_mod.add_function_with_variants( [train_body],
                                                 'train', 
@@ -557,6 +555,16 @@ class GMM(object):
         GMM.asp_mod.add_function_with_variants( [eval_body], 
                                                 'eval', 
                                                 [var_name_generator('eval')],
+                                                key_func,
+                                                lambda results, time: time,
+                                                [comparison_function_for_input_args],
+                                                [can_be_compiled],
+                                                param_names,
+                                                backend_name
+                                              )
+        GMM.asp_mod.add_function_with_variants( [seed_body], 
+                                                'seed_components', 
+                                                [var_name_generator('seed_components')],
                                                 key_func,
                                                 lambda results, time: time,
                                                 [comparison_function_for_input_args],
@@ -640,7 +648,7 @@ class GMM(object):
         if not self.components_seeded:
             self.internal_seed_data(input_data, input_data.shape[1], input_data.shape[0])
             
-        self.eval_data.likelihood = self.get_asp_mod().train_on_subset(self.M, self.D, N, K, input_data, index_list)
+        self.eval_data.likelihood = self.get_asp_mod().train_on_subset(self.M, self.D, N, K)[0]
         return self
         
         
@@ -661,7 +669,7 @@ class GMM(object):
         if not self.components_seeded:
             self.internal_seed_data(input_data, input_data.shape[1], K)
 
-        self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, K, input_data)
+        self.eval_data.likelihood = self.get_asp_mod().train(self.M, self.D, K)[0]
         return self
             
     
@@ -672,8 +680,7 @@ class GMM(object):
         self.internal_alloc_event_data(obs_data)
         self.internal_alloc_eval_data(obs_data)
         self.internal_alloc_component_data()
-        #self.eval_data.likelihood = self.get_asp_mod().eval(self.M, self.D, N)
-        self.get_asp_mod().eval(self.M, self.D, N, obs_data)
+        self.get_asp_mod().eval(self.M, self.D, N)
         logprob = self.eval_data.loglikelihoods
         posteriors = self.eval_data.memberships
         return logprob, posteriors # N log probabilities, NxM posterior probabilities for each component

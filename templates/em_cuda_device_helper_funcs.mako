@@ -1,8 +1,24 @@
 #define PI  3.1415926535897931
 #define COVARIANCE_DYNAMIC_RANGE 1E6
 #include <stdio.h>
+#include <float.h>
+#include <limits.h>
 #define MINVALUEFORMINUSLOG -1000.0f
 #define MIN_VARIANCE 0.01
+#define SCALE_VAL 1000.0f
+
+
+__device__ static int  ToFixedPoint(float input) {
+        if (input==FLT_MAX)
+                return INT_MAX;
+        return (int)(SCALE_VAL*input);
+}
+
+__device__ static float ToFloatPoint(int input) {
+        if (input==INT_MAX)
+                return FLT_MAX;
+        return (float)input/SCALE_VAL;
+}
 
 __device__ float log_add(float log_a, float log_b) {
 

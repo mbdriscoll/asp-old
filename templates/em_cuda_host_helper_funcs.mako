@@ -43,19 +43,6 @@ float *d_temploglikelihoods;
 void copy_component_data_GPU_to_CPU(int num_components, int num_dimensions);
 void copy_evals_data_GPU_to_CPU(int num_events, int num_components);
 
-
-// ================== Seed Components function - to initialize the clusters  ================= :
-
-//TODO: do we want events be passed from Python?
-void seed_components(int num_dimensions, int num_components, int num_events) {
-
-  //  printf("SEEDING\n");
-  seed_components_launch(d_fcs_data_by_event, d_components, num_dimensions, num_components, num_events);
-  CUT_CHECK_ERROR("SEED FAIL");
-}
-
-
-
 //=== Memory Alloc/Free Functions ===
 
 // ================== Event data allocation on GPU  ================= :

@@ -113,11 +113,9 @@ void dealloc_temp_components_on_CPU() {
 
 
 // ================== Event data allocation on CPU  ================= :
-void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events, int num_dimensions) {
+void alloc_events_on_CPU(pyublas::numpy_vector<float> input_data, int num_events, int num_dimensions) {
 
-  //printf("Alloc events on CPU\n");
-
-  fcs_data_by_event = input_data.data();
+  fcs_data_by_event = input_data.data().data();
   // Transpose the event data (allows coalesced access pattern in E-step kernel)
   // This has consecutive values being from the same dimension of the data
   // (num_dimensions by num_events matrix)
@@ -128,24 +126,13 @@ void alloc_events_on_CPU(pyublas::numpy_array<float> input_data, int num_events,
       fcs_data_by_dimension[d*num_events+e] = fcs_data_by_event[e*num_dimensions+d];
     }
   }
-  return;
 }
 
-//void alloc_index_list_on_CPU(pyublas::numpy_array<int> input_index_list) {
 void alloc_index_list_on_CPU(pyublas::numpy_vector<int> input_index_list) {
-
-  //printf("Alloc index list on CPU\n");
-
   index_list = input_index_list.data().data();
-  //index_list = input_index_list.data();
-
-  return;
 }
 
-
-
-void alloc_events_from_index_on_CPU(pyublas::numpy_array<float> input_data, pyublas::numpy_array<int> indices, int num_indices, int num_dimensions) {
-
+void alloc_events_from_index_on_CPU(pyublas::numpy_vector<float> input_data, pyublas::numpy_vector<int> indices, int num_indices, int num_dimensions) {
 
   fcs_data_by_event = (float*)malloc(num_indices*num_dimensions*sizeof(int));
   for(int i = 0; i<num_indices; i++) {
@@ -154,7 +141,6 @@ void alloc_events_from_index_on_CPU(pyublas::numpy_array<float> input_data, pyub
     }
   }
 
-
   fcs_data_by_dimension = (float*)malloc(num_indices*num_dimensions*sizeof(int));
   for(int e=0; e<num_indices; e++) {
     for(int d = 0; d<num_dimensions; d++) {
@@ -162,8 +148,6 @@ void alloc_events_from_index_on_CPU(pyublas::numpy_array<float> input_data, pyub
       //printf("data: %f\n", fcs_data_by_dimension[d*num_indices+e]);
     }
   }
-
-
 }
 
 // ================== Cluster data allocation on CPU  ================= :
@@ -186,7 +170,6 @@ void alloc_components_on_CPU(int original_num_components, int num_dimensions, py
   return;
 }
 
-
 //Hacky way to make sure the CPU pointers are aimed at the right component data
 void relink_components_on_CPU(pyublas::numpy_vector<float> weights, pyublas::numpy_vector<float> means, pyublas::numpy_vector<float> covars) {
      components.pi = weights.data().data();
@@ -195,13 +178,11 @@ void relink_components_on_CPU(pyublas::numpy_vector<float> weights, pyublas::num
 }
 
 // ================= Eval data alloc on CPU =============== 
-void alloc_evals_on_CPU(pyublas::numpy_array<float> component_mem_np_arr, pyublas::numpy_array<float> loglikelihoods_np_arr, int num_events, int num_components){
-  component_memberships = component_mem_np_arr.data();
-  loglikelihoods = loglikelihoods_np_arr.data();
+void alloc_evals_on_CPU(pyublas::numpy_vector<float> component_mem_np_arr, pyublas::numpy_vector<float> loglikelihoods_np_arr, int num_events, int num_components){
+  component_memberships = component_mem_np_arr.data().data();
+  loglikelihoods = loglikelihoods_np_arr.data().data();
   temploglikelihoods = (float*)malloc(sizeof(float)*num_events*num_components);
 }
-
-
 
 // ================== Event data dellocation on CPU  ================= :
 void dealloc_events_on_CPU() {
@@ -210,12 +191,11 @@ void dealloc_events_on_CPU() {
   return;
 }
 
-// Index list
+// ================== Index list dellocation on CPU  ================= :
 void dealloc_index_list_on_CPU() {
   free(index_list);
   return;
 }
-
 
 // ==================== Cluster data deallocation on CPU =================  
 void dealloc_components_on_CPU() {
@@ -231,7 +211,6 @@ void dealloc_components_on_CPU() {
   free(components.Rinv);
   return;
 }
-
 
 // ==================== Eval data deallocation on CPU =================  
 void dealloc_evals_on_CPU() {
@@ -341,22 +320,21 @@ float Log_Likelihood_KL(float *feature, int DIM, int gmm_M, float *gmm_weights, 
 }
 
 
-float compute_KL_distance(int DIM, int gmm1_M, int gmm2_M, pyublas::numpy_array<float> gmm1_weights_in, pyublas::numpy_array<float> gmm1_means_in, pyublas::numpy_array<float> gmm1_covars_in, pyublas::numpy_array<float> gmm1_CP_in, pyublas::numpy_array<float> gmm2_weights_in, pyublas::numpy_array<float> gmm2_means_in, pyublas::numpy_array<float> gmm2_covars_in, pyublas::numpy_array<float> gmm2_CP_in) {
+float compute_KL_distance(int DIM, int gmm1_M, int gmm2_M, pyublas::numpy_vector<float> gmm1_weights_in, pyublas::numpy_vector<float> gmm1_means_in, pyublas::numpy_vector<float> gmm1_covars_in, pyublas::numpy_vector<float> gmm1_CP_in, pyublas::numpy_vector<float> gmm2_weights_in, pyublas::numpy_vector<float> gmm2_means_in, pyublas::numpy_vector<float> gmm2_covars_in, pyublas::numpy_vector<float> gmm2_CP_in) {
 
   float aux;
   float log_g1,log_f1,log_g2,log_f2,f_log_g=0,f_log_f=0,g_log_f=0,g_log_g=0;
   float *point_a = new float[DIM];
   float *point_b = new float[DIM];
 
-  float *gmm1_weights = gmm1_weights_in.data();
-  float *gmm1_means = gmm1_means_in.data();
-  float *gmm1_covars = gmm1_covars_in.data();
-  float *gmm1_CP = gmm1_CP_in.data();
-  float *gmm2_weights = gmm2_weights_in.data();
-  float *gmm2_means = gmm2_means_in.data();
-  float *gmm2_covars = gmm2_covars_in.data();
-  float *gmm2_CP = gmm2_CP_in.data();
-
+  float *gmm1_weights = gmm1_weights_in.data().data();
+  float *gmm1_means = gmm1_means_in.data().data();
+  float *gmm1_covars = gmm1_covars_in.data().data();
+  float *gmm1_CP = gmm1_CP_in.data().data();
+  float *gmm2_weights = gmm2_weights_in.data().data();
+  float *gmm2_means = gmm2_means_in.data().data();
+  float *gmm2_covars = gmm2_covars_in.data().data();
+  float *gmm2_CP = gmm2_CP_in.data().data();
 
   for(int i=0;i<gmm1_M;i++)
     {
@@ -415,10 +393,6 @@ float compute_KL_distance(int DIM, int gmm1_M, int gmm2_M, pyublas::numpy_array<
   delete [] point_b;
   return 1.0/(2.0*DIM)*(f_log_f + g_log_g - f_log_g - g_log_f);
 }
-
-
-
-
 
 
 int compute_distance_rissanen(int c1, int c2, int num_dimensions) {
