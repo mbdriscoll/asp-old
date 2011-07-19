@@ -201,8 +201,44 @@ class EMTester(object):
                 out_file.write("SPEAKER " + meeting_name + " 1 " + str(start_secs) + " "+ str(dur_secs) + " <NA> <NA> " + "speaker_" + str(cnum) + " <NA>\n")
 
 
-        print "DONE"
+        print "DONE writing RTTM file"
 
+    def write_to_GMM(self, gmmfile):
+
+        gmm_f = open(gmmfile, 'w')
+
+        gmm_f.write("Number of clusters: " + str(len(self.gmm_list)) + "\n")
+             
+        #print parameters
+        cluster_count = 0
+        for gmm in self.gmm_list:
+
+            gmm_f.write("Cluster " + str(cluster_count) + "\n")
+            means = gmm.components.means
+            covars = gmm.components.covars
+            weights = gmm.components.weights
+
+            gmm_f.write("Number of Gaussians: "+ str(gmm.M) + "\n")
+
+            gmm_count = 0
+            for g in range(0, gmm.M):
+                g_means = means[range(gmm_count*gmm.D, gmm_count*gmm.D+gmm.D)]
+                g_covar_full = np.array(covars[range(gmm_count*gmm.D*gmm.D, gmm_count*gmm.D*gmm.D + gmm.D*gmm.D)]).reshape(gmm.D, gmm.D)
+                g_covar = np.diag(g_covar_full)
+                g_weight = weights[gmm_count]
+
+                gmm_f.write("Gaussian: " + str(gmm_count) + "\n")
+                gmm_f.write("Weight: " + str(g_weight) + "\n")
+                
+                for f in range(0, gmm.D):
+                    gmm_f.write("Feature " + str(f) + " Mean " + str(g_means[f]) + " Var " + str(g_covar[f]) + "\n")
+
+                gmm_count+=1
+                
+            cluster_count+=1
+
+        print "DONE writing GMM file"
+        
     def new_gmm(self, M):
         self.M = M
         self.gmm = GMM(self.M, self.D, names_of_backends_to_use=self.names_of_backends, variant_param_spaces=self.variant_param_spaces, device_id=self.device_id)
@@ -426,6 +462,12 @@ def get_config_params(config):
     except:
         print "output_cluster file not specified in config file! exiting..."
         sys.exit(2)
+
+    try:
+        gmmfile = config.get('Diarizer', 'gmm_output')
+    except:
+        print "gmm_output file not specified in config file! exiting..."
+        sys.exit(2)
         
     #read GMM paramters
     try:
@@ -461,7 +503,7 @@ def get_config_params(config):
         num_em_iters = 3
 
         
-    return meeting_name, f, sp, outfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters
+    return meeting_name, f, sp, outfile, gmmfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters
 
 
 
@@ -504,7 +546,7 @@ if __name__ == '__main__':
 
     config.read(config_file)
 
-    meeting_name, f, sp, outfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters = get_config_params(config)
+    meeting_name, f, sp, outfile, gmmfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters = get_config_params(config)
     variant_param_spaces = {'base': {},
                             'cuda_boost': {'num_blocks_estep': ['16'],
                                            'num_threads_estep': ['512'],
@@ -526,6 +568,6 @@ if __name__ == '__main__':
     emt.new_gmm_list(num_comps, num_gmms)
     most_likely = emt.cluster(kl_ntop, num_seg_iters_init, num_seg_iters)
     emt.write_to_RTTM(outfile, sp, meeting_name, most_likely, num_gmms)
-
+    emt.write_to_GMM(gmmfile)
 
 
