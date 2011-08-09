@@ -307,7 +307,7 @@ class GMM(object):
             GMM.eval_data_gpu_copy = None
 
     def internal_seed_data(self, X, D, N):
-        self.get_asp_mod().seed_components(D, self.M, N)
+        self.get_asp_mod().seed_components(self.M, D, N)
         self.components_seeded = True
                             
             
