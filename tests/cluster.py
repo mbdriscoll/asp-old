@@ -295,6 +295,7 @@ class EMTester(object):
             cluster_data = np.ascontiguousarray(cluster_data)
 
             g.train(cluster_data)
+            
             iter_bic_list.append((g,cluster_data))
             iter_bic_dict[p] = cluster_data
             cluster_count += 1
@@ -559,7 +560,7 @@ if __name__ == '__main__':
                                            'diag_only': ['1'],
                                            'max_iters': [num_em_iters],
                                            'min_iters': ['1'],
-                                           'covar_version_name': ['V1', 'V2A', 'V2B'] },
+                                           'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
                             'cilk_boost': {}
                             }
 

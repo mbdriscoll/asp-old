@@ -342,7 +342,7 @@ estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components,
 
             float logl;
             if(component_pi > 0.0f) {
-              logl = -0.5*(like + component_CP) + log(component_pi) ;  
+              logl = -0.5*(like + component_CP) + logf(component_pi) ;  
             } else {
               logl = MINVALUEFORMINUSLOG;
             }
@@ -766,15 +766,6 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     float cov_sum = 0.0f; //my local sum for the matrix element, I (thread) sum up over all N events into this var
 
     if(tid < num_dimensions*(num_dimensions+1)/2) {
-        for(int event=0; event < num_events; event++) {
-          cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
-        }
-    }
-
-    __syncthreads();
-
-    if(tid < num_dimensions*(num_dimensions+1)/2) {
-
 #if ${diag_only}
       if(row!=col) {
         components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
@@ -783,6 +774,15 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
         return;      
       }
 #endif
+
+        for(int event=0; event < num_events; event++) {
+          cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
+        }
+    }
+
+    __syncthreads();
+
+    if(tid < num_dimensions*(num_dimensions+1)/2) {
 
         if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
           cov_sum /= components->N[c];
@@ -916,6 +916,15 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     float cov_sum = 0.0f; //my local sum for the matrix element, I (thread) sum up over all N events into this var
 
     if(tid < num_dimensions*(num_dimensions+1)/2) {
+
+#if ${diag_only}
+      if(row!=col) {
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        matrix_index = col*num_dimensions+row;
+        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+        return;      
+      }
+#endif
         for(int event=e_start; event < e_end; event++) {
           cov_sum += (fcs_data[event*num_dimensions+row]-means[row])*(fcs_data[event*num_dimensions+col]-means[col])*component_memberships[c*num_events+event];
         }
@@ -925,26 +934,22 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
         float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]);
 %else:
-        float log_temp = log(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
-        float log_myR = log(myR[matrix_index]);
-        int fixp_temp = floor(log_temp*1000000);
-        int fixp_myR = floor(log_myR*1000000);
-        int fixp_old = atomicAdd(&fixp_temp, fixp_myR);
-        float old = exp((float)fixp_old/1000000);
+/*         float log_temp = logf(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]); */
+/*         float log_myR = logf(myR[matrix_index]); */
+/*         int fixp_temp = floor(log_temp*1000000); */
+/*         int fixp_myR = floor(log_myR*1000000); */
+/*         int fixp_old = atomicAdd(&fixp_temp, fixp_myR); */
+/*         float old = exp((float)fixp_old/1000000); */
+
+        int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), ToFixedPoint(myR[matrix_index]));       
+          
 %endif
     }
 
     __syncthreads();
 
     if(tid < num_dimensions*(num_dimensions+1)/2) {
-#if ${diag_only}
-      if(row!=col) {
-        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-        matrix_index = col*num_dimensions+row;
-        components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-        return;      
-      }
-#endif
+
       if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
         cs /= components->N[c];
@@ -1066,6 +1071,7 @@ void mstep_covar_launch_idx${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_
 
 %else:
 
+   
 /*
  * Computes the covariance matrices of the data (R matrix)
  * Must be launched with a D*D/2 blocks: 
@@ -1079,15 +1085,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
   int matrix_index = row * num_dimensions + col;
         //DIAGONAL
-#if ${diag_only}
-    if(row!=col) {
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-      matrix_index = col*num_dimensions+row;
-      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
-      return;
-      
-    }
-#endif    
+
   // Store ALL the means in shared memory
   __shared__ float means[${max_num_components_covar_v3}*${max_num_dimensions_covar_v3}];
   for(int i = tid; i<num_components*num_dimensions; i+=${num_threads_mstep}) {
@@ -1099,6 +1097,16 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
   __shared__ float component_sum[${max_num_components_covar_v3}]; //local storage for component results
   
   for(int c = 0; c<num_components; c++) {
+
+#if ${diag_only}
+    if(row!=col) {
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+      matrix_index = col*num_dimensions+row;
+      components->R[c*num_dimensions*num_dimensions+matrix_index] = 0.0f;
+      return;
+    }
+#endif    
+
     float cov_sum = 0.0f;
     for(int event=tid; event < num_events; event+=${num_threads_mstep}) {
       cov_sum += (fcs_data[row*num_events+event]-means[c*num_dimensions+row])*(fcs_data[col*num_events+event]-means[c*num_dimensions+col])*component_memberships[c*num_events+event];
@@ -1106,12 +1114,12 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     temp_sums[tid] = cov_sum;
     
     __syncthreads();
-      
+    
     parallelSum(temp_sums);
     if(tid == 0) {
-      component_sum[c] = temp_sums[0]; 
+      component_sum[c] = temp_sums[0];
     }
-    __syncthreads();
+    // __syncthreads();
   }
   __syncthreads();
     
@@ -1119,8 +1127,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     matrix_index =  row * num_dimensions + col;
     if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
       component_sum[c] /= components->N[c];
-      if(component_sum[c] <= MIN_VARIANCE)
-          component_sum[c] = MIN_VARIANCE;
+
       components->R[c*num_dimensions*num_dimensions+matrix_index] = component_sum[c];
       matrix_index = col*num_dimensions+row;
       components->R[c*num_dimensions*num_dimensions+matrix_index] = component_sum[c];
@@ -1131,8 +1138,7 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     }
     if(row == col) {
       components->R[c*num_dimensions*num_dimensions+matrix_index] += components->avgvar[c];
-      if(components->R[c*num_dimensions*num_dimensions+matrix_index] <= MIN_VARIANCE)
-          components->R[c*num_dimensions*num_dimensions+matrix_index] = MIN_VARIANCE;
+
     }
   } 
 }
@@ -1141,6 +1147,7 @@ void mstep_covar_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_dime
 {
   int num_blocks = num_dimensions*(num_dimensions+1)/2;
   mstep_covariance${'_'+'_'.join(param_val_list)}<<<num_blocks, ${num_threads_mstep}>>>(d_fcs_data_by_dimension,d_components,d_component_memberships,num_dimensions,num_components,num_events);
+    compute_CP${'_'+'_'.join(param_val_list)}<<<num_components, ${num_threads_estep}>>>(d_components, num_dimensions);
 }
 
 __global__ void
