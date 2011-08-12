@@ -21,25 +21,14 @@ __device__ static float ToFloatPoint(int input) {
 }
 
 __device__ float log_add(float log_a, float log_b) {
-
-  float result;
-  if(log_a < log_b)
-    {
+  if(log_a < log_b) {
       float tmp = log_a;
       log_a = log_b;
       log_b = tmp;
     }
   //setting MIN...LOG so small, I don't even need to look
-  if((log_b - log_a) <= MINVALUEFORMINUSLOG)
-    {
-      return log_a;
-    }
-  else
-    {
-      result = log_a + (float)(logf(1.0 + (double)(expf((double)(log_b - log_a)))));
-    }
-  return result;
-
+  return (((log_b - log_a) <= MINVALUEFORMINUSLOG) ? log_a : 
+                log_a + (float)(logf(1.0 + (double)(expf((double)(log_b - log_a))))));
 }
 
 
