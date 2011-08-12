@@ -92,9 +92,9 @@ class CodeVariantSelector(object):
                 self.perf_database.add_time(key, -1., v_id, v_id_set)
             return None
 
+	search_result = exhaustive_search()
         best = self.perf_database.get_oracular_best(key)
-        return best if best else exhaustive_search()
-        return ret_func or error_func
+        return best if best else search_result
 
     def use_supplied_function_to_generate_a_new_variant():
         pass
