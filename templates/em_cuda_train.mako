@@ -20,6 +20,7 @@ boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
     CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(${tempbuff_type_name})*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
 %endif
 
+  // Computes the R matrix inverses, and the gaussian constant
   constants_kernel_launch${'_'+'_'.join(param_val_list)}(d_components,num_components,num_dimensions);
   cudaThreadSynchronize();
   CUT_CHECK_ERROR("Constants Kernel execution failed: ");
