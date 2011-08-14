@@ -1,4 +1,19 @@
 
+void compute_CP${'_'+'_'.join(param_val_list)}(components_t* components, int M, int D) {
+    int row, col;
+    cilk_for( int m = 0; m < M; m++) {
+        cilk::reducer_opadd<float> total(0.0f);
+        cilk_for(int d = 0; d < D; d++) {
+            row = (d) / D; 
+            col = (d) % D; 
+            if(row==col) {
+                total += logf(2*PI*components->R[m*D*D + row*D +col]);
+            }
+        }
+        components->CP[m] = total.get_value();
+    }
+}
+
 void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* components, int D, int M, int N) {
     float* variances = (float*) malloc(sizeof(float)*D);
     float* means = (float*) malloc(sizeof(float)*D);
@@ -71,10 +86,11 @@ void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* c
     }
     free(variances);
     free(means);
+    compute_CP${'_'+'_'.join(param_val_list)}(components, M, D);
 }
 
 void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, int D) {
-	float log_determinant;
+    float log_determinant;
     float* matrix = (float*) malloc(sizeof(float)*D*D);
 
     float sum = 0.0;
@@ -201,4 +217,6 @@ void mstep_covar${'_'+'_'.join(param_val_list)}(float* data, components_t* compo
             }
         }
     }
+    //TODO: Doing this because mstep_covar_launch${} in the Cuda version does it...not sure why
+    compute_CP${'_'+'_'.join(param_val_list)}(components, M, D);
 }

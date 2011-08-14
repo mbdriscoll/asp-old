@@ -492,6 +492,7 @@ class GMM(object):
             typedef struct components_struct {
                 float* N;        // expected # of pixels in component: [M]
                 float* pi;       // probability of component in GMM: [M]
+                float* CP; //cluster probability [M]
                 float* constant; // Normalizing constant [M]
                 float* avgvar;    // average variance [M]
                 float* means;   // Spectral mean for the component: [M*D]
