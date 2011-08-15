@@ -6,14 +6,11 @@ tempbuff_type_name = 'int' if supports_32b_floating_point_atomics == '0' else 'f
 
 // SPEAKER DIARIZATION GMM TRAINING
                                                                                          
-__device__ void average_variance${'_'+'_'.join(param_val_list)}(components_t* components, float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar, int num_components) {
+__device__ void seed_covars${'_'+'_'.join(param_val_list)}(components_t* components, float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar, int num_components) {
     // access thread id
     int tid = threadIdx.x;
     int num_threads = blockDim.x;
     int row, col;
-    __shared__ float variances[${max_num_dimensions}];
-    __shared__ float total_variance;
-
 
     // Compute average variance for each dimension
 
@@ -35,27 +32,6 @@ __device__ void average_variance${'_'+'_'.join(param_val_list)}(components_t* co
       }
     }
 
-    if(tid < num_dimensions) {
-        variances[tid] = 0.0f;
-        // Sum up all the variance
-        for(int j=0; j < num_events; j++) {
-            variances[tid] += (fcs_data[j*num_dimensions + tid])*(fcs_data[j*num_dimensions + tid]);
-        }
-
-            
-        variances[tid] /= (float) num_events;
-        variances[tid] -= means[tid]*means[tid];
-    }
-    
-    __syncthreads();
-    
-    if(tid == 0) {
-        total_variance = 0.0f;
-        for(int i=0; i<num_dimensions;i++) {
-          total_variance += variances[i];
-        }
-        *avgvar = total_variance / (float) num_dimensions;
-    }
 }
 
 //PANGBORN
@@ -199,8 +175,8 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
     __shared__ float avgvar;
     
     // Compute the average variance
-    average_variance${'_'+'_'.join(param_val_list)}(components, fcs_data, means, num_dimensions, num_events, &avgvar, num_components);
-        
+    seed_covars${'_'+'_'.join(param_val_list)}(components, fcs_data, means, num_dimensions, num_events, &avgvar, num_components);
+    average_variance${'_'+'_'.join(param_val_list)}(fcs_data, means, num_dimensions, num_events, &avgvar);    
     int num_elements;
     int row, col;
         
@@ -235,7 +211,7 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
         }
     }
 
-    //calculate CP
+    //compute pi, N
     for(int c =0; c<num_components; c++) {
         if(tid == 0) {
           components->pi[c] = 1.0f/((float)num_components);
@@ -243,7 +219,6 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
           components->avgvar[c] = avgvar / COVARIANCE_DYNAMIC_RANGE;
         }
     }
-
 }
   
 __device__ void compute_indices${'_'+'_'.join(param_val_list)}(int num_events, int* start, int* stop) {
@@ -332,7 +307,7 @@ estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components,
             }
         #else
             for(int i=0; i<num_dimensions; i++) {
-                for(int j=0; j<num_dimensions; j++) {
+                for(int j=i+1; j<num_dimensions; j++) {
                   like += (fcs_data[i*num_events+event]-means[i]) * (fcs_data[j*num_events+event]-means[j]) * Rinv[i*num_dimensions+j];
       
                 }
@@ -545,7 +520,7 @@ mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components
     }
     
     __syncthreads();
-    
+
     average_variance${'_'+'_'.join(param_val_list)}(fcs_data, means, num_dimensions, num_events, &avgvar);
 
     // END NEW COMPUTE AVERAGE COVAR
