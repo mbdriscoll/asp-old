@@ -208,6 +208,7 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
           
         for(int i=tid; i < num_elements; i+= num_threads) {
           components->R[c*num_dimensions*num_dimensions+i] = components->R[i];
+          components->Rinv[c*num_dimensions*num_dimensions+i] = 0.0f;
         }
     }
 
@@ -906,18 +907,9 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
 
         myR[matrix_index] = cov_sum;
 %if supports_32b_floating_point_atomics != '0':      
-
         float old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), myR[matrix_index]);
 %else:
-/*         float log_temp = logf(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]); */
-/*         float log_myR = logf(myR[matrix_index]); */
-/*         int fixp_temp = floor(log_temp*1000000); */
-/*         int fixp_myR = floor(log_myR*1000000); */
-/*         int fixp_old = atomicAdd(&fixp_temp, fixp_myR); */
-/*         float old = exp((float)fixp_old/1000000); */
-
         int old = atomicAdd(&(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]), ToFixedPoint(myR[matrix_index]));       
-          
 %endif
     }
 
@@ -926,7 +918,11 @@ mstep_covariance${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* c
     if(tid < num_dimensions*(num_dimensions+1)/2) {
 
       if(components->N[c] >= 1.0f) { // Does it need to be >=1, or just something non-zero?
+%if supports_32b_floating_point_atomics != '0':      
         float cs = temp_buffer[c*num_dimensions*num_dimensions+matrix_index];
+%else:
+        float cs = ToFloatPoint(temp_buffer[c*num_dimensions*num_dimensions+matrix_index]);
+%endif
         cs /= components->N[c];
         components->R[c*num_dimensions*num_dimensions+matrix_index] = cs;
         // Set the symmetric value
