@@ -236,4 +236,44 @@ void dealloc_evals_on_GPU() {
   return;
 }
 
+// ==================== Diagnostics =================
+
+void print_components(int num_components, int num_dimensions){
+  copy_component_data_GPU_to_CPU(num_components,num_dimensions);
+  printf("===============\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components.N[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components.pi[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components.CP[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components.constant[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components.avgvar[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+    for(int d = 0; d < num_dimensions; d++)
+        printf("%0.4f ", components.means[m*num_dimensions+d]);
+    printf("\n");
+  }
+    for(int m = 0; m < num_components; m++){
+        for(int d = 0; d < num_dimensions; d++)
+            for(int d2 = 0; d2 < num_dimensions; d2++)
+                printf("%0.4f ", components.R[m*num_dimensions*num_dimensions+d*num_dimensions+d2]);
+        printf("\n");
+    }
+
+    for(int m = 0; m < num_components; m++){
+        for(int d = 0; d < num_dimensions; d++)
+            for(int d2 = 0; d2 < num_dimensions; d2++)
+                printf("%0.4f ", components.Rinv[m*num_dimensions*num_dimensions+d*num_dimensions+d2]);
+        printf("\n");
+    }
+  printf("===============\n");
+}
 
