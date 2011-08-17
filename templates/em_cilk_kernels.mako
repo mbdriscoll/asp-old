@@ -14,9 +14,45 @@ void compute_CP${'_'+'_'.join(param_val_list)}(components_t* components, int M, 
     }
 }
 
+__device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar) {
+    
+    cilk::reducer_opadd<float> total(0.0f);
+    // Compute average variance for each dimension
+    cilk_for(int i = 0; i < num_dimensions, i++) {
+        float variance = 0.0f;
+        for(int j=0; j < num_events; j++) {
+            variance += fcs_data[j*num_dimensions + i]*fcs_data[j*num_dimensions + i];
+        }
+        variance /= (float) num_events;
+        variance -= means[i]*means[i];
+        total += variance;
+    }
+    
+    *avgvar = total.get_value() / (float) num_dimensions;
+}
+
+void seed_covars${'_'+'_'.join(param_val_list)}(components_t* components, float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar, int num_components) {
+
+    cilk_for(int i=0; i < num_dimensions*num_dimensions; i++) {
+      int row = (i) / num_dimensions;
+      int col = (i) % num_dimensions;
+      components->R[row*num_dimensions+col] = 0.0f;
+      for(int j=0; j < num_events; j++) {
+        if(row==col) {
+          components->R[row*num_dimensions+col] += (fcs_data[j*num_dimensions + row])*(fcs_data[j*num_dimensions + row]);
+        }
+      }
+      if(row==col) {
+        components->R[row*num_dimensions+col] /= (float) (num_events -1);
+        components->R[row*num_dimensions+col] -= ((float)(num_events)*means[row]*means[row]) / (float)(num_events-1);
+        components->R[row*num_dimensions+col] /= (float)num_components;
+      }
+    }
+}
+
 void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* components, int D, int M, int N) {
-    float* variances = (float*) malloc(sizeof(float)*D);
     float* means = (float*) malloc(sizeof(float)*D);
+    float avgvar;
 
     // Compute means
     for(int d=0; d < D; d++) {
@@ -27,64 +63,34 @@ void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* c
         means[d] /= (float) N;
     }
 
-    // Compute variance of each dimension
-    for(int d=0; d < D; d++) {
-        variances[d] = 0.0;
-        for(int n=0; n < N; n++) {
-            variances[d] += data[n*D+d]*data[n*D+d];
-        }
-        variances[d] /= (float) N;
-        variances[d] -= means[d]*means[d];
-    }
-
-    // Average variance
-    float avgvar = 0.0;
-    for(int d=0; d < D; d++) {
-        avgvar += variances[d];
-    }
-    avgvar /= (float) D;
-
-    // Initialization for random seeding and uniform seeding    
-    float fraction;
-    int seed;
-    if(M > 1) {
-        fraction = (N-1.0f)/(M-1.0f);
+    // Compute the average variance
+    seed_covars${'_'+'_'.join(param_val_list)}(components, data, means, num_dimensions, num_events, &avgvar, num_components);
+    average_variance${'_'+'_'.join(param_val_list)}(data, means, num_dimensions, num_events, &avgvar);    
+    float seed;
+    if(num_components > 1) {
+       seed = (num_events)/(num_components);
     } else {
-        fraction = 0.0;
+       seed = 0.0f;
     }
 
-    // Cilk Plus: Needed to be set below to make the program run.
-    srand(clock());
+    memcpy(components->means, means, sizeof(float)*num_dimensions);
 
-    for(int m=0; m < M; m++) {
-        components->N[m] = (float) N / (float) M;
-        components->pi[m] = 1.0f / (float) M;
-        components->avgvar[m] = avgvar / COVARIANCE_DYNAMIC_RANGE;
-
-        // Choose component centers
-        #if UNIFORM_SEED
-            for(int d=0; d < D; d++) {
-                components->means[m*D+d] = data[((int)(m*fraction))*D+d];
-            }
-        #else
-            seed = rand() % N;
-            for(int d=0; d < D; d++) {
-                components->means[m*D+d] = data[seed*D+d];
-            }
-        #endif
-
-        // Set covariances to identity matrices
-        for(int i=0; i < D; i++) {
-            for(int j=0; j < D; j++) {
-                if(i == j) {
-                    components->R[m*D*D+i*D+j] = 1.0f;
-                } else {
-                    components->R[m*D*D+i*D+j] = 0.0f;
-                }
-            }
+    for(int c=1; c < num_components; c++) {
+        memcpy(&components->means[c*num_dimensions], &data[((int)(c*seed))*num_dimensions], sizeof(float)*num_dimensions);
+          
+        for(int i=0; i < num_dimensions*num_dimensions; i++) {
+          components->R[c*num_dimensions*num_dimensions+i] = components->R[i];
+          components->Rinv[c*num_dimensions*num_dimensions+i] = 0.0f;
         }
     }
-    free(variances);
+
+    //compute pi, N
+    for(int c =0; c<num_components; c++) {
+        components->pi[c] = 1.0f/((float)num_components);
+        components->N[c] = ((float) num_events) / ((float)num_components);
+        components->avgvar[c] = avgvar / COVARIANCE_DYNAMIC_RANGE;
+    }
+
     free(means);
     compute_CP${'_'+'_'.join(param_val_list)}(components, M, D);
 }
@@ -104,13 +110,13 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
         components->constant[m] = -D*0.5f*logf(2.0f*PI) - 0.5f*log_determinant;
 
         // Sum for calculating pi values
-        sum += components->N[m];
+        //sum += components->N[m];
     }
 
     // Compute pi values
-    for(int m=0; m < M; m++) {
-        components->pi[m] = components->N[m] / sum;
-    }
+    //for(int m=0; m < M; m++) {
+    //    components->pi[m] = components->N[m] / sum;
+    //}
     
     free(matrix);
 }
@@ -118,6 +124,9 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
 void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N, float* likelihood, float* loglikelihoods) {
     // Compute likelihood for every data point in each component
     cilk_for(int m=0; m < M; m++) {
+        float component_pi = components->pi[m];
+        float constant = components->constant[m];
+        float component_CP = components->CP[m];
         cilk_for(int n=0; n < N; n++) {
             float* means = (float*) &(components->means[m*D]);
             float* Rinv = (float*) &(components->Rinv[m*D*D]);
