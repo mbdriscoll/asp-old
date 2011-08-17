@@ -14,11 +14,11 @@ void compute_CP${'_'+'_'.join(param_val_list)}(components_t* components, int M, 
     }
 }
 
-__device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar) {
+void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar) {
     
     cilk::reducer_opadd<float> total(0.0f);
     // Compute average variance for each dimension
-    cilk_for(int i = 0; i < num_dimensions, i++) {
+    cilk_for(int i = 0; i < num_dimensions; i++) {
         float variance = 0.0f;
         for(int j=0; j < num_events; j++) {
             variance += fcs_data[j*num_dimensions + i]*fcs_data[j*num_dimensions + i];
@@ -50,17 +50,17 @@ void seed_covars${'_'+'_'.join(param_val_list)}(components_t* components, float*
     }
 }
 
-void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* components, int D, int M, int N) {
-    float* means = (float*) malloc(sizeof(float)*D);
+void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* components, int num_dimensions, int num_components, int num_events) {
+    float* means = (float*) malloc(sizeof(float)*num_dimensions);
     float avgvar;
 
     // Compute means
-    for(int d=0; d < D; d++) {
+    for(int d=0; d < num_dimensions; d++) {
         means[d] = 0.0;
-        for(int n=0; n < N; n++) {
-            means[d] += data[n*D+d];
+        for(int n=0; n < num_events; n++) {
+            means[d] += data[n*num_dimensions+d];
         }
-        means[d] /= (float) N;
+        means[d] /= (float) num_events;
     }
 
     // Compute the average variance
@@ -92,7 +92,7 @@ void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* c
     }
 
     free(means);
-    compute_CP${'_'+'_'.join(param_val_list)}(components, M, D);
+    compute_CP${'_'+'_'.join(param_val_list)}(components, num_components, num_dimensions);
 }
 
 void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, int D) {
@@ -123,6 +123,7 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
 
 void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N, float* likelihood, float* loglikelihoods) {
     // Compute likelihood for every data point in each component
+    float* temploglikelihoods = (float*)malloc(M*N*sizeof(float));
     cilk_for(int m=0; m < M; m++) {
         float component_pi = components->pi[m];
         float constant = components->constant[m];
@@ -130,22 +131,32 @@ void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components
         cilk_for(int n=0; n < N; n++) {
             float* means = (float*) &(components->means[m*D]);
             float* Rinv = (float*) &(components->Rinv[m*D*D]);
-            float like = 0.0;
+            float loglike = 0.0;
             #if ${diag_only}
             for(int i=0; i < D; i++) {
-                like += (data[i+n*D]-means[i])*(data[i+n*D]-means[i])*Rinv[i*D+i];
+                loglike += (data[i+n*D]-means[i])*(data[i+n*D]-means[i])*Rinv[i*D+i];
             }
             #else
             for(int i=0; i < D; i++) {
                 for(int j=0; j < D; j++) {
-                    like += (data[i+n*D]-means[i])*(data[j+n*D]-means[j])*Rinv[i*D+j];
+                    loglike += (data[i+n*D]-means[i])*(data[j+n*D]-means[j])*Rinv[i*D+j];
                 }
             }
             #endif  
-            loglikelihoods[n] = like;
-            component_memberships[m*N+n] = -0.5f * like + components->constant[m] + log(components->pi[m]); 
+            loglike = (component_pi > 0.0f) ? -0.5*(loglike + component_CP) + logf(component_pi) : MINVALUEFORMINUSLOG;
+            temploglikelihoods[m*N+n] = loglike;
+            component_memberships[m*N+n] = -0.5f * loglike + component_constant + log(component_pi); 
         }
     }
+    //estep1 log_add()
+    cilk_for(int n=0; n < N; n++) {
+        float finalloglike = MINVALUEFROMMINUSLOG;
+        for(int m=0; m < M; m++) {
+            finalloglike = log_add(finalloglike, temploglikelihoods[m*N+n]);
+        }
+        loglikelihoods[n] = finalloglike;s
+    }
+    free(temploglikelihoods);
 }
 
 float estep2_events${'_'+'_'.join(param_val_list)}(components_t* components, float* component_memberships, int M, int n, int N) {

@@ -1,6 +1,6 @@
 import unittest
-import pylab as pl
 import matplotlib as mpl
+import pylab as pl
 import itertools
 import sys
 import math
@@ -80,6 +80,7 @@ class EMTester(object):
                 ell.set_alpha(0.5)
                 splot.add_artist(ell)
         pl.show()
+        pl.savefig('myfig')
         
 if __name__ == '__main__':
     device_id = 0
@@ -97,9 +98,12 @@ if __name__ == '__main__':
                 'max_iters': ['10'],
                 'min_iters': ['10'],
                 'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
-            'cilk_boost': {}
+        'cilk_boost': {
+            'diag_only': ['0'],
+            'max_iters': ['10'],
+            'min_iters': ['1'] }
     }
-    emt = EMTester(False, variant_param_spaces, num_subplots, device_id, ['cuda'])
+    emt = EMTester(False, variant_param_spaces, num_subplots, device_id, [sys.argv[1]])
     emt.new_gmm(3)
     emt.test_pure_python()
     emt.test_sejits()
