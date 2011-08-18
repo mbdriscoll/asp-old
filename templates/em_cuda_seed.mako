@@ -1,6 +1,3 @@
-
-// ================== Seed Components function - to initialize the clusters  ================= :
-
 //TODO: the only reason this is not simply a helper function is because the kernel launched by seed_components_launch${}() uses average_variance${}(), a function specialized based on $max_dimension.
 //	Therefore, all the functions in the call stack must also be specialized...
 //TODO: do we want events be passed from Python?

@@ -80,7 +80,7 @@ class EMTester(object):
                 ell.set_alpha(0.5)
                 splot.add_artist(ell)
         pl.show()
-        pl.savefig('myfig')
+        pl.savefig('em_test')
         
 if __name__ == '__main__':
     device_id = 0
@@ -94,12 +94,12 @@ if __name__ == '__main__':
                 'max_num_components': ['122'],
                 'max_num_dimensions_covar_v3': ['40'],
                 'max_num_components_covar_v3': ['82'],
-                'diag_only': ['0'],
+                'diag_only': ['1'],
                 'max_iters': ['10'],
-                'min_iters': ['10'],
+                'min_iters': ['1'],
                 'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
         'cilk_boost': {
-            'diag_only': ['0'],
+            'diag_only': ['1'],
             'max_iters': ['10'],
             'min_iters': ['1'] }
     }

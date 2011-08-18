@@ -54,7 +54,7 @@ boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
     old_likelihood = likelihood;
 
     
-    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_events,d_likelihoods,num_components,d_loglikelihoods, d_temploglikelihoods);
+    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_components,num_events,d_loglikelihoods, d_temploglikelihoods);
     estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_components,num_events,d_likelihoods, d_loglikelihoods);
     cudaThreadSynchronize();
     CUT_CHECK_ERROR("E-step Kernel execution failed");
@@ -100,7 +100,7 @@ boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
     
     //regroup = E step
     // Compute new component membership probabilities for all the events
-    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components,d_component_memberships, num_dimensions,num_events,d_likelihoods,num_components,d_loglikelihoods, d_temploglikelihoods);
+    estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components,d_component_memberships, num_dimensions,num_components,num_events,d_loglikelihoods, d_temploglikelihoods);
     estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components,d_component_memberships, num_dimensions,num_components,num_events,d_likelihoods, d_loglikelihoods);
     cudaThreadSynchronize();
     CUT_CHECK_ERROR("E-step Kernel execution failed: ");

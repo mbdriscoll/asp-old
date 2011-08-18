@@ -88,7 +88,7 @@ void seed_covars${'_'+'_'.join(param_val_list)}(components_t* components, float*
     }
 }
 
-void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* components, int num_dimensions, int num_components, int num_events) {
+void seed_components${'_'+'_'.join(param_val_list)}(float *data_by_event, components_t* components, int num_dimensions, int num_components, int num_events) {
     float* means = (float*) malloc(sizeof(float)*num_dimensions);
     float avgvar;
 
@@ -96,14 +96,14 @@ void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* c
     for(int d=0; d < num_dimensions; d++) {
         means[d] = 0.0;
         for(int n=0; n < num_events; n++) {
-            means[d] += data[n*num_dimensions+d];
+            means[d] += data_by_event[n*num_dimensions+d];
         }
         means[d] /= (float) num_events;
     }
 
     // Compute the average variance
-    seed_covars${'_'+'_'.join(param_val_list)}(components, data, means, num_dimensions, num_events, &avgvar, num_components);
-    average_variance${'_'+'_'.join(param_val_list)}(data, means, num_dimensions, num_events, &avgvar);    
+    seed_covars${'_'+'_'.join(param_val_list)}(components, data_by_event, means, num_dimensions, num_events, &avgvar, num_components);
+    average_variance${'_'+'_'.join(param_val_list)}(data_by_event, means, num_dimensions, num_events, &avgvar);    
     float seed;
     if(num_components > 1) {
        seed = (num_events)/(num_components);
@@ -114,7 +114,7 @@ void seed_components${'_'+'_'.join(param_val_list)}(float *data, components_t* c
     memcpy(components->means, means, sizeof(float)*num_dimensions);
 
     for(int c=1; c < num_components; c++) {
-        memcpy(&components->means[c*num_dimensions], &data[((int)(c*seed))*num_dimensions], sizeof(float)*num_dimensions);
+        memcpy(&components->means[c*num_dimensions], &data_by_event[((int)(c*seed))*num_dimensions], sizeof(float)*num_dimensions);
           
         for(int i=0; i < num_dimensions*num_dimensions; i++) {
           components->R[c*num_dimensions*num_dimensions+i] = components->R[i];
@@ -141,32 +141,31 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
     for(int m=0; m < M; m++) {
         // Invert covariance matrix
         memcpy(matrix,&(components->R[m*D*D]),sizeof(float)*D*D);
-        for(int i = 0; i < D*D; i++) printf("%f ", matrix[i]);
-        printf("\n");
         invert_cpu(matrix,D,&log_determinant);
-        printf("log_determinant: %e\n",log_determinant); 
         memcpy(&(components->Rinv[m*D*D]),matrix,sizeof(float)*D*D);
     
         // Compute constant
         components->constant[m] = -D*0.5f*logf(2.0f*PI) - 0.5f*log_determinant;
 
         // Sum for calculating pi values
-        //sum += components->N[m];
+        sum += components->N[m];
+        printf("Derminant %f\n", log_determinant);
     }
 
     // Compute pi values
     //for(int m=0; m < M; m++) {
     //    components->pi[m] = components->N[m] / sum;
     //}
+    normalize_pi(components, M);
     print_components(components, M, D);
     
     free(matrix);
 }
 
-void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N, float* likelihood, float* loglikelihoods) {
+void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N, float* loglikelihoods) {
     // Compute likelihood for every data point in each component
     float* temploglikelihoods = (float*)malloc(M*N*sizeof(float));
-    for(int m=0; m < M; m++) {
+    cilk_for(int m=0; m < M; m++) {
         float component_pi = components->pi[m];
         float component_constant = components->constant[m];
         float component_CP = components->CP[m];
@@ -188,6 +187,7 @@ void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components
             float loglike = (component_pi > 0.0f) ? -0.5*(like + component_CP) + logf(component_pi) : MINVALUEFORMINUSLOG;
             temploglikelihoods[m*N+n] = loglike;
             component_memberships[m*N+n] = -0.5f * like + component_constant + log(component_pi); 
+            if(n==0)printf("%f %f %f\n", like, data[0], data[1]);
         }
     }
     //estep1 log_add()
@@ -208,11 +208,11 @@ float estep2_events${'_'+'_'.join(param_val_list)}(components_t* components, flo
 	float max_likelihood;
 	float denominator_sum = 0.0f;
 
-	//max_likelihood = __sec_reduce_max(component_memberships[n:M:N]);
-        max_likelihood = component_memberships[n];
-        for(int m = 1; m < M; m++)
-            max_likelihood =
-fmaxf(max_likelihood,component_memberships[m*N+n]);
+	max_likelihood = __sec_reduce_max(component_memberships[n:M:N]);
+        //max_likelihood = component_memberships[n];
+        //for(int m = 1; m < M; m++)
+        //    max_likelihood =
+        //          fmaxf(max_likelihood,component_memberships[m*N+n]);
 
 	// Computes sum of all likelihoods for this event
 	for(int m=0; m < M; m++) {
@@ -246,7 +246,7 @@ void estep2${'_'+'_'.join(param_val_list)}(float* data, components_t* components
 
 void mstep_n${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N) {
     float avgvar;
-    for(int m=0; m < M; m++) {
+    cilk_for(int m=0; m < M; m++) {
         average_variance${'_'+'_'.join(param_val_list)}(data, &(components->means[m*D]), D, N, &avgvar);
         components->N[m] = 0.0;
         for(int n=0; n < N; n++) {

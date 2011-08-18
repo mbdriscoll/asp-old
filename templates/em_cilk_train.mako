@@ -21,7 +21,7 @@ boost::python::tuple em_cilk_train${'_'+'_'.join(param_val_list)} (
     while(iters < ${max_iters}) { // || (fabs(change) > epsilon && iters < ${max_iters})) {
         old_likelihood = likelihood;
 
-        estep1${'_'+'_'.join(param_val_list)}(fcs_data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,&likelihood,loglikelihoods);
+        estep1${'_'+'_'.join(param_val_list)}(fcs_data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,loglikelihoods);
         estep2${'_'+'_'.join(param_val_list)}(fcs_data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,&likelihood);
         
         // This kernel computes a new N, pi isn't updated until compute_constants though
@@ -35,7 +35,7 @@ boost::python::tuple em_cilk_train${'_'+'_'.join(param_val_list)} (
         iters++;
     }
 
-    estep1${'_'+'_'.join(param_val_list)}(fcs_data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,&likelihood,loglikelihoods);
+    estep1${'_'+'_'.join(param_val_list)}(fcs_data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,loglikelihoods);
     estep2${'_'+'_'.join(param_val_list)}(fcs_data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,&likelihood);
     
   return boost::python::make_tuple(likelihood, iters);

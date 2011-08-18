@@ -13,6 +13,17 @@ float log_add(float log_a, float log_b) {
                 log_a + (float)(logf(1.0 + (double)(expf((double)(log_b - log_a))))));
 }
 
+void normalize_pi(components_t* components, int num_components) {
+    cilk::reducer_opadd<float> total(0.0f);
+    cilk_for(int i=0; i<num_components; i++) {
+        total += components->pi[i];
+    }
+    
+    cilk_for(int m=0; m < num_components; m++){
+        components->pi[m] /= total.get_value(); 
+    }
+}
+
 static int 
 ludcmp(float *a,int n,int *indx,float *d);
 
