@@ -137,7 +137,7 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
     float log_determinant;
     float* matrix = (float*) malloc(sizeof(float)*D*D);
 
-    float sum = 0.0;
+    //float sum = 0.0;
     for(int m=0; m < M; m++) {
         // Invert covariance matrix
         memcpy(matrix,&(components->R[m*D*D]),sizeof(float)*D*D);
@@ -146,18 +146,9 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
     
         // Compute constant
         components->constant[m] = -D*0.5f*logf(2.0f*PI) - 0.5f*log_determinant;
-
-        // Sum for calculating pi values
-        sum += components->N[m];
-        printf("Derminant %f\n", log_determinant);
     }
 
-    // Compute pi values
-    //for(int m=0; m < M; m++) {
-    //    components->pi[m] = components->N[m] / sum;
-    //}
     normalize_pi(components, M);
-    print_components(components, M, D);
     
     free(matrix);
 }
@@ -187,7 +178,6 @@ void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components
             float loglike = (component_pi > 0.0f) ? -0.5*(like + component_CP) + logf(component_pi) : MINVALUEFORMINUSLOG;
             temploglikelihoods[m*N+n] = loglike;
             component_memberships[m*N+n] = -0.5f * like + component_constant + log(component_pi); 
-            if(n==0)printf("%f %f %f\n", like, data[0], data[1]);
         }
     }
     //estep1 log_add()
@@ -228,19 +218,14 @@ float estep2_events${'_'+'_'.join(param_val_list)}(components_t* components, flo
 	}
         //or component_memberships[n:M:N] = exp(component_memberships[n:M:N] - denominator_sum);
 
-        //printf("%f ", thread_likelihood);
 	return thread_likelihood;
 }
 
 void estep2${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N, float* likelihood) {
     cilk::reducer_opadd<float> total(0.0f);
-    //for(int n = 0; n < N; n++) printf("%f ", component_memberships[n]);
     cilk_for(int n=0; n < N; n++) {
         total += estep2_events${'_'+'_'.join(param_val_list)}(components, component_memberships, M, n, N);
     }
-    //printf("CompMemb2: "); for(int n=0; n <N; n++) { printf("%f ", component_memberships[n]); }
-//printf("\n");
-    //printf("\n\n%f\n\n", total.get_value());
     *likelihood = total.get_value();
 }
 
@@ -286,7 +271,6 @@ void mstep_covar${'_'+'_'.join(param_val_list)}(float* data, components_t* compo
                 for(int n=0; n < N; n++) {
                     sum += (data[i*N+n]-means[i])*(data[j*N+n]-means[j])*component_memberships[m*N+n];
                 }
-                printf("%f ", sum);
 
                 if(components->N[m] >= 1.0f) {
                     components->R[m*D*D+i*D+j] = sum / components->N[m];

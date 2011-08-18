@@ -7,10 +7,4 @@ void em_cilk_eval${'_'+'_'.join(param_val_list)} (
   // Computes the R matrix inverses, and the gaussian constant
   constants${'_'+'_'.join(param_val_list)}(&components,num_components,num_dimensions);
   estep1${'_'+'_'.join(param_val_list)}(fcs_data_by_dimension,&components,component_memberships,num_dimensions,num_components,num_events,loglikelihoods);
-  for(int i = 0; i < num_components; i++) {
-    for(int j = 0; j < num_events; j++)
-        printf("%f ", component_memberships[i*num_events +j]);
-    printf("\n");
-  }
-  printf("\n");
 }
