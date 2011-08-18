@@ -1,11 +1,49 @@
 
+void print_components(components_t * components, int num_components, int num_dimensions){
+  printf("===============\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components->N[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components->pi[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components->CP[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components->constant[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+	printf("%0.4f ", components->avgvar[m]);
+  } printf("\n");
+  for(int m = 0; m < num_components; m++){
+    for(int d = 0; d < num_dimensions; d++)
+        printf("%0.4f ", components->means[m*num_dimensions+d]);
+    printf("\n");
+  }
+    for(int m = 0; m < num_components; m++){
+        for(int d = 0; d < num_dimensions; d++)
+            for(int d2 = 0; d2 < num_dimensions; d2++)
+                printf("%0.4f ", components->R[m*num_dimensions*num_dimensions+d*num_dimensions+d2]);
+        printf("\n");
+    }
+
+    for(int m = 0; m < num_components; m++){
+        for(int d = 0; d < num_dimensions; d++)
+            for(int d2 = 0; d2 < num_dimensions; d2++)
+                printf("%0.4f ", components->Rinv[m*num_dimensions*num_dimensions+d*num_dimensions+d2]);
+        printf("\n");
+    }
+  printf("===============\n");
+}
+
 void compute_CP${'_'+'_'.join(param_val_list)}(components_t* components, int M, int D) {
     int row, col;
     cilk_for( int m = 0; m < M; m++) {
         cilk::reducer_opadd<float> total(0.0f);
-        cilk_for(int d = 0; d < D; d++) {
-            row = (d) / D; 
-            col = (d) % D; 
+        cilk_for(int i = 0; i < D*D; i++) {
+            row = (i) / D; 
+            col = (i) % D; 
             if(row==col) {
                 total += logf(2*PI*components->R[m*D*D + row*D +col]);
             }
@@ -103,7 +141,10 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
     for(int m=0; m < M; m++) {
         // Invert covariance matrix
         memcpy(matrix,&(components->R[m*D*D]),sizeof(float)*D*D);
+        for(int i = 0; i < D*D; i++) printf("%f ", matrix[i]);
+        printf("\n");
         invert_cpu(matrix,D,&log_determinant);
+        printf("log_determinant: %e\n",log_determinant); 
         memcpy(&(components->Rinv[m*D*D]),matrix,sizeof(float)*D*D);
     
         // Compute constant
@@ -117,6 +158,7 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
     //for(int m=0; m < M; m++) {
     //    components->pi[m] = components->N[m] / sum;
     //}
+    print_components(components, M, D);
     
     free(matrix);
 }
@@ -124,77 +166,94 @@ void constants${'_'+'_'.join(param_val_list)}(components_t* components, int M, i
 void estep1${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N, float* likelihood, float* loglikelihoods) {
     // Compute likelihood for every data point in each component
     float* temploglikelihoods = (float*)malloc(M*N*sizeof(float));
-    cilk_for(int m=0; m < M; m++) {
+    for(int m=0; m < M; m++) {
         float component_pi = components->pi[m];
-        float constant = components->constant[m];
+        float component_constant = components->constant[m];
         float component_CP = components->CP[m];
-        cilk_for(int n=0; n < N; n++) {
-            float* means = (float*) &(components->means[m*D]);
-            float* Rinv = (float*) &(components->Rinv[m*D*D]);
-            float loglike = 0.0;
+        float* means = &(components->means[m*D]);
+        float* Rinv = &(components->Rinv[m*D*D]);
+        for(int n=0; n < N; n++) {
+            float like = 0.0;
             #if ${diag_only}
             for(int i=0; i < D; i++) {
-                loglike += (data[i+n*D]-means[i])*(data[i+n*D]-means[i])*Rinv[i*D+i];
+                like += (data[i*N+n]-means[i])*(data[i*N+n]-means[i])*Rinv[i*D+i];
             }
             #else
             for(int i=0; i < D; i++) {
-                for(int j=0; j < D; j++) {
-                    loglike += (data[i+n*D]-means[i])*(data[j+n*D]-means[j])*Rinv[i*D+j];
+                for(int j=i+1; j < D; j++) {
+                    like += (data[i*N+n]-means[i])*(data[j*N+n]-means[j])*Rinv[i*D+j];
                 }
             }
             #endif  
-            loglike = (component_pi > 0.0f) ? -0.5*(loglike + component_CP) + logf(component_pi) : MINVALUEFORMINUSLOG;
+            float loglike = (component_pi > 0.0f) ? -0.5*(like + component_CP) + logf(component_pi) : MINVALUEFORMINUSLOG;
             temploglikelihoods[m*N+n] = loglike;
-            component_memberships[m*N+n] = -0.5f * loglike + component_constant + log(component_pi); 
+            component_memberships[m*N+n] = -0.5f * like + component_constant + log(component_pi); 
         }
     }
     //estep1 log_add()
-    cilk_for(int n=0; n < N; n++) {
-        float finalloglike = MINVALUEFROMMINUSLOG;
+    for(int n=0; n < N; n++) {
+        float finalloglike = MINVALUEFORMINUSLOG;
         for(int m=0; m < M; m++) {
             finalloglike = log_add(finalloglike, temploglikelihoods[m*N+n]);
         }
-        loglikelihoods[n] = finalloglike;s
+        loglikelihoods[n] = finalloglike;
     }
     free(temploglikelihoods);
 }
 
 float estep2_events${'_'+'_'.join(param_val_list)}(components_t* components, float* component_memberships, int M, int n, int N) {
 	// Finding maximum likelihood for this data point
+        float temp = 0.0f;
+        float thread_likelihood = 0.0f;
 	float max_likelihood;
-	max_likelihood = __sec_reduce_max(component_memberships[n:M:N]);
+	float denominator_sum = 0.0f;
+
+	//max_likelihood = __sec_reduce_max(component_memberships[n:M:N]);
+        max_likelihood = component_memberships[n];
+        for(int m = 1; m < M; m++)
+            max_likelihood =
+fmaxf(max_likelihood,component_memberships[m*N+n]);
 
 	// Computes sum of all likelihoods for this event
-	float denominator_sum;
-	denominator_sum = 0.0f;
 	for(int m=0; m < M; m++) {
-		denominator_sum += exp(component_memberships[m*N+n] - max_likelihood);
+            temp = exp(component_memberships[m*N+n] - max_likelihood);
+            denominator_sum += temp;
 	}
-	denominator_sum = max_likelihood + log(denominator_sum);
+	temp = max_likelihood + logf(denominator_sum);
+        thread_likelihood += temp;
 
 	// Divide by denominator to get each membership
 	for(int m=0; m < M; m++) {
-		component_memberships[m*N+n] = exp(component_memberships[m*N+n] - denominator_sum);
+	    component_memberships[m*N+n] = expf(component_memberships[m*N+n] - temp);
 	}
         //or component_memberships[n:M:N] = exp(component_memberships[n:M:N] - denominator_sum);
 
-	return denominator_sum;
+        //printf("%f ", thread_likelihood);
+	return thread_likelihood;
 }
 
 void estep2${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N, float* likelihood) {
     cilk::reducer_opadd<float> total(0.0f);
+    //for(int n = 0; n < N; n++) printf("%f ", component_memberships[n]);
     cilk_for(int n=0; n < N; n++) {
         total += estep2_events${'_'+'_'.join(param_val_list)}(components, component_memberships, M, n, N);
     }
+    //printf("CompMemb2: "); for(int n=0; n <N; n++) { printf("%f ", component_memberships[n]); }
+//printf("\n");
+    //printf("\n\n%f\n\n", total.get_value());
     *likelihood = total.get_value();
 }
 
 void mstep_n${'_'+'_'.join(param_val_list)}(float* data, components_t* components, float* component_memberships, int D, int M, int N) {
+    float avgvar;
     for(int m=0; m < M; m++) {
+        average_variance${'_'+'_'.join(param_val_list)}(data, &(components->means[m*D]), D, N, &avgvar);
         components->N[m] = 0.0;
         for(int n=0; n < N; n++) {
             components->N[m] += component_memberships[m*N+n];
         }
+        components->pi[m] =  components->N[m];
+        components->avgvar[m] = avgvar / COVARIANCE_DYNAMIC_RANGE;
     }
 }
 
@@ -213,7 +272,7 @@ void mstep_mean${'_'+'_'.join(param_val_list)}(float* data, components_t* compon
 void mstep_covar${'_'+'_'.join(param_val_list)}(float* data, components_t* components,float* component_memberships, int D, int M, int N) {
     cilk_for(int m=0; m < M; m++) {
         float* means = &(components->means[m*D]);
-        float sum;
+        cilk::reducer_opadd<float> cov_sum(0.0f);
         for(int i=0; i < D; i++) {
             for(int j=0; j <= i; j++) {
                 #if ${diag_only}
@@ -223,10 +282,12 @@ void mstep_covar${'_'+'_'.join(param_val_list)}(float* data, components_t* compo
                     continue;
                 }
                 #endif
-                sum = 0.0;
+                float sum = 0.0;
                 for(int n=0; n < N; n++) {
                     sum += (data[i*N+n]-means[i])*(data[j*N+n]-means[j])*component_memberships[m*N+n];
                 }
+                printf("%f ", sum);
+
                 if(components->N[m] >= 1.0f) {
                     components->R[m*D*D+i*D+j] = sum / components->N[m];
                     components->R[m*D*D+j*D+i] = sum / components->N[m];
@@ -234,9 +295,11 @@ void mstep_covar${'_'+'_'.join(param_val_list)}(float* data, components_t* compo
                     components->R[m*D*D+i*D+j] = 0.0f;
                     components->R[m*D*D+j*D+i] = 0.0f;
                 }
+                if(i == j) {
+                    components->R[m*D*D+j*D+i] += components->avgvar[m];
+                }
             }
         }
     }
-    //TODO: Doing this because mstep_covar_launch${} in the Cuda version does it...not sure why
     compute_CP${'_'+'_'.join(param_val_list)}(components, M, D);
 }
