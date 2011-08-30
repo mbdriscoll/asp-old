@@ -357,8 +357,10 @@ class EMTester(object):
                         data = np.concatenate((d1,d2))
                     elif gmm1idx in iter_bic_dict:
                         data = iter_bic_dict[gmm1idx]
-                    else:
+                    elif gmm2idx in iter_bic_dict:
                         data = iter_bic_dict[gmm2idx]
+                    else:
+                        continue
 
                     new_gmm, score = compute_distance_BIC(g1, g2, data)
                     
@@ -561,10 +563,13 @@ if __name__ == '__main__':
                                            'max_iters': [num_em_iters],
                                            'min_iters': ['1'],
                                            'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
-                            'cilk_boost': {}
+                            'cilk_boost': {
+                                'diag_only': ['1'],
+                                'max_iters': [num_em_iters],
+                                'min_iters': ['1'] }
                             }
 
-    emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cuda'])
+    emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cilk'])
     #emt = EMTester(True, f, sp, variant_param_space, device_id)
     emt.new_gmm_list(num_comps, num_gmms)
     most_likely = emt.cluster(kl_ntop, num_seg_iters_init, num_seg_iters)
