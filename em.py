@@ -315,10 +315,10 @@ class GMM(object):
         self.M = M
         self.D = D
         self.variant_param_spaces = variant_param_spaces or GMM.variant_param_defaults
+        self.names_of_backends_to_use = names_of_backends_to_use
         self.components = Components(M, D, weights, means, covars)
         self.eval_data = EvalData(1, M)
         self.clf = None # pure python mirror module
-
         self.use_cuda = False
         self.use_cilk = False
         self.device = None
@@ -757,7 +757,7 @@ def compute_distance_BIC(gmm1, gmm2, data):
     w = np.append(ratio1*gmm1.components.weights, ratio2*gmm2.components.weights)
     m = np.append(gmm1.components.means, gmm2.components.means)
     c = np.append(gmm1.components.covars, gmm2.components.covars)
-    temp_GMM = GMM(nComps, gmm1.D, weights=w, means=m, covars=c)
+    temp_GMM = GMM(nComps, gmm1.D, weights=w, means=m, covars=c, names_of_backends_to_use=gmm1.names_of_backends_to_use, variant_param_spaces=gmm1.variant_param_spaces, device_id=gmm1.device_id)
 
     temp_GMM.train(data)
 
@@ -776,7 +776,7 @@ def compute_distance_BIC_idx(gmm1, gmm2, data, index_list):
     w = np.append(ratio1*gmm1.components.weights, ratio2*gmm2.components.weights)
     m = np.append(gmm1.components.means, gmm2.components.means)
     c = np.append(gmm1.components.covars, gmm2.components.covars)
-    temp_GMM = GMM(nComps, gmm1.D, weights=w, means=m, covars=c)
+    temp_GMM = GMM(nComps, gmm1.D, weights=w, means=m, covars=c, names_of_backends_to_use=gmm1.names_of_backends_to_use, variant_param_spaces=gmm1.variant_param_spaces, device_id=gmm1.device_id)
     
     temp_GMM.train_on_subset_c(data, index_list)
     
