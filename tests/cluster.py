@@ -569,8 +569,7 @@ if __name__ == '__main__':
                                 'min_iters': ['1'] }
                             }
 
-    emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cilk'])
-    #emt = EMTester(True, f, sp, variant_param_space, device_id)
+    emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cuda'])
     emt.new_gmm_list(num_comps, num_gmms)
     most_likely = emt.cluster(kl_ntop, num_seg_iters_init, num_seg_iters)
     emt.write_to_RTTM(outfile, sp, meeting_name, most_likely, num_gmms)
