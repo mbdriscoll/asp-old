@@ -5,7 +5,76 @@ tempbuff_type_name = 'int' if supports_32b_floating_point_atomics == '0' else 'f
 #include <stdio.h>
 
 // SPEAKER DIARIZATION GMM TRAINING
-                                                                                         
+__device__ void invert${'_'+'_'.join(param_val_list)}(float* data, int actualsize, float* log_determinant) {
+  int maxsize = actualsize;
+  int n = actualsize;
+  int num_threads = blockDim.x;
+  int num_dimensions = actualsize;
+  int row, col;
+  
+   
+  if(threadIdx.x == 0) {
+    *log_determinant = 0.0f;
+    // sanity check
+    if (actualsize == 1) {
+      *log_determinant = logf(data[0]);
+      data[0] = 1.0 / data[0];
+    } else {
+
+      for (int i=1; i < actualsize; i++) data[i] /= data[0]; // normalize row 0
+      for (int i=1; i < actualsize; i++) {
+        for (int j=i; j < actualsize; j++) { // do a column of L
+          float sum = 0.0f;
+          for (int k = 0; k < i; k++)
+            sum += data[j*maxsize+k] * data[k*maxsize+i];
+          data[j*maxsize+i] -= sum;
+        }
+        if (i == actualsize-1) continue;
+        for (int j=i+1; j < actualsize; j++) { // do a row of U
+          float sum = 0.0f;
+          for (int k = 0; k < i; k++)
+            sum += data[i*maxsize+k]*data[k*maxsize+j];
+          data[i*maxsize+j] =
+            (data[i*maxsize+j]-sum) / data[i*maxsize+i];
+        }
+      }
+
+      for(int i=0; i<actualsize; i++) {
+        *log_determinant += logf(fabs(data[i*n+i]));
+      }
+
+      for ( int i = 0; i < actualsize; i++ ) // invert L
+        for ( int j = i; j < actualsize; j++ ) {
+          float x = 1.0f;
+          if ( i != j ) {
+            x = 0.0f;
+            for ( int k = i; k < j; k++ )
+              x -= data[j*maxsize+k]*data[k*maxsize+i];
+          }
+          data[j*maxsize+i] = x / data[j*maxsize+j];
+        }
+      for ( int i = 0; i < actualsize; i++ ) // invert U
+        for ( int j = i; j < actualsize; j++ ) {
+          if ( i == j ) continue;
+          float sum = 0.0f;
+          for ( int k = i; k < j; k++ )
+            sum += data[k*maxsize+j]*( (i==k) ? 1.0 : data[i*maxsize+k] );
+          data[i*maxsize+j] = -sum;
+        }
+      for ( int i = 0; i < actualsize; i++ ) // final inversion
+        for ( int j = 0; j < actualsize; j++ ) {
+          float sum = 0.0f;
+          for ( int k = ((i>j)?i:j); k < actualsize; k++ )
+            sum += ((j==k)?1.0:data[j*maxsize+k])*data[k*maxsize+i];
+          data[j*maxsize+i] = sum;
+        }
+    }
+  }
+}
+
+
+
+                                                                                
 __device__ void seed_covars${'_'+'_'.join(param_val_list)}(components_t* components, float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar, int num_components) {
     // access thread id
     int tid = threadIdx.x;
@@ -34,7 +103,6 @@ __device__ void seed_covars${'_'+'_'.join(param_val_list)}(components_t* compone
 
 }
 
-//PANGBORN
 
 __device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data, float* means, int num_dimensions, int num_events, float* avgvar) {
     // access thread id
@@ -49,10 +117,8 @@ __device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data,
         // Sum up all the variance
         for(int j=0; j < num_events; j++) {
             // variance = (data - mean)^2
-            variances[tid] += (fcs_data[j*num_dimensions + tid])*(fcs_data[j*num_dimensions + tid]);
+          variances[tid] += (fcs_data[j*num_dimensions + tid])*(fcs_data[j*num_dimensions + tid]);
         }
-
-            
         variances[tid] /= (float) num_events;
         variances[tid] -= means[tid]*means[tid];
     }
@@ -66,6 +132,7 @@ __device__ void average_variance${'_'+'_'.join(param_val_list)}(float* fcs_data,
         }
         *avgvar = total_variance / (float) num_dimensions;
     }
+
 }
 
 __global__ void compute_CP${'_'+'_'.join(param_val_list)}(components_t* components, int num_dimensions) {
@@ -108,11 +175,11 @@ __device__ void compute_constants${'_'+'_'.join(param_val_list)}(components_t* c
     int num_threads = blockDim.x;
     //int num_elements = ${max_num_dimensions}*${max_num_dimensions};
     int num_elements = num_dimensions*num_dimensions;
-
+    int row, col;
 
     __shared__ float determinant_arg; // only one thread computes the inverse so we need a shared argument
     
-    float log_determinant;
+    float log_determinant = 0.0f;
     
     __shared__ float matrix[${max_num_dimensions}*${max_num_dimensions}];
     
@@ -123,10 +190,10 @@ __device__ void compute_constants${'_'+'_'.join(param_val_list)}(components_t* c
     for(int i=tid; i<num_elements; i+= num_threads ) {
         matrix[i] = components->R[c*num_dimensions*num_dimensions+i];
     }
-
+      
     __syncthreads(); 
-    
-    invert(matrix,num_dimensions,&determinant_arg);
+
+    invert${'_'+'_'.join(param_val_list)}(matrix,num_dimensions,&determinant_arg);
 
     __syncthreads(); 
 
@@ -174,7 +241,8 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
     
     __shared__ float avgvar;
     
-    // Compute the average variance
+    // Seed first covariance matrix
+    //Compute the average variance
     seed_covars${'_'+'_'.join(param_val_list)}(components, fcs_data, means, num_dimensions, num_events, &avgvar, num_components);
     average_variance${'_'+'_'.join(param_val_list)}(fcs_data, means, num_dimensions, num_events, &avgvar);    
     int num_elements;
@@ -183,7 +251,7 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
     // Number of elements in the covariance matrix
     num_elements = num_dimensions*num_dimensions;
 
-    __syncthreads();
+     __syncthreads();
 
     float seed;
     if(num_components > 1) {
@@ -205,7 +273,7 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
             components->means[c*num_dimensions+tid] = fcs_data[((int)(c*seed))*num_dimensions+tid];
        
           }
-          
+        //Seed the rest of the covariance matrices
         for(int i=tid; i < num_elements; i+= num_threads) {
           components->R[c*num_dimensions*num_dimensions+i] = components->R[i];
           components->Rinv[c*num_dimensions*num_dimensions+i] = 0.0f;
@@ -221,7 +289,36 @@ seed_components${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* c
         }
     }
 }
-  
+
+__global__ void compute_average_variance${'_'+'_'.join(param_val_list)}( float* fcs_data, components_t* components, int num_dimensions, int num_components, int num_events)
+{
+      // access thread id
+    int tid = threadIdx.x;
+    // access number of threads in this block
+    int num_threads = blockDim.x;
+
+    // shared memory
+    __shared__ float means[${max_num_dimensions}];
+    
+    // Compute the means
+    mvtmeans(fcs_data, num_dimensions, num_events, means);
+   
+    __syncthreads();
+    
+    __shared__ float avgvar;
+    
+    average_variance${'_'+'_'.join(param_val_list)}(fcs_data, means, num_dimensions, num_events, &avgvar);    
+
+    __syncthreads();
+    
+    for(int c =0; c<num_components; c++) {
+      if(tid == 0) {
+        components->avgvar[c] = avgvar / COVARIANCE_DYNAMIC_RANGE;
+      }
+    }
+}
+
+
 __device__ void compute_indices${'_'+'_'.join(param_val_list)}(int num_events, int* start, int* stop) {
     // Break up the events evenly between the blocks
     int num_pixels_per_block = num_events / ${num_blocks_estep};
@@ -289,7 +386,7 @@ estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components,
         
     // Sync to wait for all params to be loaded to shared memory
     __syncthreads();
-
+    
     if(blockIdx.y == 0) {
       for(int event=start_index; event<end_index; event += ${num_threads_estep}) {
         loglikelihoods[event] = 0.0f; 
@@ -316,18 +413,19 @@ estep1${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components,
             }
 #endif
 
-            float logl;
+            float logl, logpi;
             if(component_pi > 0.0f) {
-              logl = -0.5*(like + component_CP) + logf(component_pi) ;  
+              logl = -0.5*(like + component_CP) + logf(component_pi) ;
+              //logpi = logf(component_pi);
             } else {
               logl = MINVALUEFORMINUSLOG;
+              //logpi = MINVALUEFORMINUSLOG;
             }
 
             temploglikelihoods[c*num_events+event] = logl;
 
-            
             component_memberships[c*num_events+event] = -0.5f * like + constant + logf(component_pi); // numerator of the probability computation
-        
+
     }
 
 }
@@ -443,7 +541,6 @@ mstep_means${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* compon
       }
       components->means[c*num_dimensions+d] = temp_sum[0] / components->N[c];
     }
-
 }
     
 
@@ -520,10 +617,6 @@ mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components
     
     __syncthreads();
 
-    average_variance${'_'+'_'.join(param_val_list)}(fcs_data, means, num_dimensions, num_events, &avgvar);
-
-    // END NEW COMPUTE AVERAGE COVAR
-    
     // Need to store the sum computed by each thread so in the end
     // a single thread can reduce to get the final sum
     __shared__ float temp_sums[${num_threads_mstep}];
@@ -549,10 +642,7 @@ mstep_N${'_'+'_'.join(param_val_list)}(float* fcs_data, components_t* components
 
       // Set PI to the # of expected items, and then normalize it later
       components->pi[c] = components->N[c];
-     
-      //NEW COMPUTE AVERAGE COVAR
-      components->avgvar[c] = avgvar / COVARIANCE_DYNAMIC_RANGE;
-      //END NEW COMPUTE AVERAGE COVAR
+
     }
 }
 
@@ -1252,9 +1342,15 @@ mstep_covariance_transpose${'_'+'_'.join(param_val_list)}(float* fcs_data, compo
 
 void seed_components_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_event, components_t* d_components, int num_dimensions, int num_components, int num_events)
 {
-  //printf("SEEDING\n");
   seed_components${'_'+'_'.join(param_val_list)}<<< 1, ${num_threads_estep}>>>( d_fcs_data_by_event, d_components, num_dimensions, num_components, num_events);
   compute_CP${'_'+'_'.join(param_val_list)}<<<num_components, ${num_threads_estep}>>>(d_components, num_dimensions);
+  cudaThreadSynchronize();
+
+}
+
+void compute_average_variance_launch${'_'+'_'.join(param_val_list)}(float* d_fcs_data_by_event, components_t* d_components, int num_dimensions, int num_components, int num_events)
+{
+  compute_average_variance${'_'+'_'.join(param_val_list)}<<< 1, ${num_threads_estep}>>>( d_fcs_data_by_event, d_components, num_dimensions, num_components, num_events);
   cudaThreadSynchronize();
 
 }
@@ -1312,9 +1408,9 @@ constants_kernel${'_'+'_'.join(param_val_list)}(components_t* components, int nu
     }
 }
 
-void constants_kernel_launch${'_'+'_'.join(param_val_list)}(components_t* d_components, int original_num_components, int num_dimensions)
+void constants_kernel_launch${'_'+'_'.join(param_val_list)}(components_t* d_components, int num_components, int num_dimensions)
 {
-  constants_kernel${'_'+'_'.join(param_val_list)}<<<original_num_components, ${max_num_components}>>>(d_components,original_num_components,num_dimensions);
+  constants_kernel${'_'+'_'.join(param_val_list)}<<<num_components, ${num_threads_mstep}>>>(d_components,num_components,num_dimensions);
 }
 
 

@@ -128,6 +128,7 @@ class EMTester(object):
 
         smoothed_most_likely = np.array([], dtype=np.float32)
 
+            
         while end_chunk < len(most_likely):
             chunk_arr = most_likely[range(chunk, end_chunk)]
             max_gmm = stats.mode(chunk_arr)[0][0]
@@ -249,15 +250,6 @@ class EMTester(object):
         self.gmm_list = [GMM(self.M, self.D, names_of_backends_to_use=self.names_of_backends, variant_param_spaces=self.variant_param_spaces, device_id=self.device_id) for i in range(k)]
 
 
-#     def new_gmm(self, M):
-#         self.M = M
-#         self.gmm = GMM(self.M, self.D, self.variant_param_space, self.device_id)
-
-#     def new_gmm_list(self, M, k):
-#         self.M = M
-#         self.init_num_clusters = k
-#         self.gmm_list = [GMM(self.M, self.D, self.variant_param_space, self.device_id) for i in range(k)]
-
 
     def segment_majority_vote(self):
         
@@ -267,7 +259,12 @@ class EMTester(object):
         likelihoods = self.gmm_list[0].score(self.X)
         for g in self.gmm_list[1:]:
             likelihoods = np.column_stack((likelihoods, g.score(self.X)))
-        most_likely = likelihoods.argmax(axis=1)
+
+        if num_clusters == 1:
+            most_likely = np.zeros(len(self.X))
+        else:
+            most_likely = likelihoods.argmax(axis=1)
+
 
         # Across 2.5 secs of observations, vote on which cluster they should be associated with
 
@@ -275,17 +272,19 @@ class EMTester(object):
         interval_size = 250
 
         for i in range(interval_size, self.N, interval_size):
+
             arr = np.array(most_likely[(range(i-interval_size, i))])
             max_gmm = int(stats.mode(arr)[0][0])
             iter_training.setdefault((self.gmm_list[max_gmm],max_gmm),[]).append(self.X[i-interval_size:i,:])
-        
+
         arr = np.array(most_likely[(range((self.N/interval_size)*interval_size, self.N))])
         max_gmm = int(stats.mode(arr)[0][0])
         iter_training.setdefault((self.gmm_list[max_gmm], max_gmm),[]).append(self.X[(self.N/interval_size)*interval_size:self.N,:])
-                
+
+        
         iter_bic_dict = {}
         iter_bic_list = []
-        cluster_count = 0
+                
         for gp, data_list in iter_training.iteritems():
             g = gp[0]
             p = gp[1]
@@ -295,13 +294,59 @@ class EMTester(object):
             cluster_data = np.ascontiguousarray(cluster_data)
 
             g.train(cluster_data)
-            
+              
             iter_bic_list.append((g,cluster_data))
             iter_bic_dict[p] = cluster_data
-            cluster_count += 1
+        
+        return iter_bic_dict, iter_bic_list, most_likely
+
+    def segment_majority_vote_indices(self):
+        
+        num_clusters = len(self.gmm_list)
+
+        # Resegment data based on likelihood scoring
+        likelihoods = self.gmm_list[0].score(self.X)
+        for g in self.gmm_list[1:]:
+            likelihoods = np.column_stack((likelihoods, g.score(self.X)))
+
+        if num_clusters == 1:
+            most_likely = np.zeros(len(self.X))
+        else:
+            most_likely = likelihoods.argmax(axis=1)
+
+        # Across 2.5 secs of observations, vote on which cluster they should be associated with
+
+        iter_training = {}
+        interval_size = 250
+        
+        for i in range(interval_size, self.N, interval_size):
+        
+            arr = np.array(most_likely[(range(i-interval_size, i))])
+            max_gmm = int(stats.mode(arr)[0][0])
+            iter_training.setdefault((self.gmm_list[max_gmm],max_gmm),[]).append((i-interval_size,i))
+
+        arr = np.array(most_likely[(range((self.N/interval_size)*interval_size, self.N))])
+        max_gmm = int(stats.mode(arr)[0][0])
+        iter_training.setdefault((self.gmm_list[max_gmm], max_gmm),[]).append((self.N/interval_size*interval_size, self.N))
+
+        
+        iter_bic_dict = {}
+        iter_bic_list = []
+        
+        for gp, e_tuple_list in iter_training.iteritems():
+            g = gp[0]
+            p = gp[1]
+            
+            cluster_indices =  np.array(range(e_tuple_list[0][0], e_tuple_list[0][1],1), dtype=np.int32)
+            for d in e_tuple_list[1:]:
+                cluster_indices = np.concatenate((cluster_indices, np.array(range(d[0],d[1],1),dtype=np.int32)))
+
+            g.train_on_subset(self.X,cluster_indices)
+            iter_bic_list.append((g,cluster_indices))
+            iter_bic_dict[p] = cluster_indices
 
         return iter_bic_dict, iter_bic_list, most_likely
-        
+
     def cluster(self, KL_ntop, NUM_SEG_LOOPS_INIT, NUM_SEG_LOOPS):
 
         print "CLUSTERING"
@@ -329,6 +374,7 @@ class EMTester(object):
         
         while (best_BIC_score > 0 and len(self.gmm_list) > 1):
 
+            total_loops+=1
             for segment_iter in range(0,NUM_SEG_LOOPS):
                 iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote()
 
@@ -340,9 +386,8 @@ class EMTester(object):
 
             # ------- KL distance to compute best pairs to merge -------
             if KL_ntop > 0:
-            
-                top_K_gmm_pairs = self.gmm_list[0].find_top_KL_pairs(KL_ntop, self.gmm_list)
 
+                top_K_gmm_pairs = self.gmm_list[0].find_top_KL_pairs(KL_ntop, self.gmm_list)
                 
                 for pair in top_K_gmm_pairs:
                     score = 0.0
@@ -374,6 +419,7 @@ class EMTester(object):
             # ------- All-to-all comparison of gmms to merge -------
             else: 
                 l = len(iter_bic_list)
+
                 for gmm1idx in range(l):
                     for gmm2idx in range(gmm1idx+1, l):
                         score = 0.0
@@ -382,6 +428,120 @@ class EMTester(object):
 
                         data = np.concatenate((d1,d2))
                         new_gmm, score = compute_distance_BIC(g1, g2, data)
+
+                        #print "Comparing BIC %d with %d: %f" % (gmm1idx, gmm2idx, score)
+                        if score > best_BIC_score: 
+                            best_merged_gmm = new_gmm
+                            merged_tuple = (g1, g2)
+                            merged_tuple_indices = (gmm1idx, gmm2idx)
+                            best_BIC_score = score
+
+            # Merge the winning candidate pair if its deriable to do so
+            merge_time = time.time()
+            if best_BIC_score > 0.0:
+                gmms_with_events = []
+                for gp in iter_bic_list:
+                    gmms_with_events.append(gp[0])
+
+                #cleanup the gmm_list - remove empty gmms
+                for g in self.gmm_list:
+                    if g not in gmms_with_events and g != merged_tuple[0] and g!= merged_tuple[1]:
+                        #remove
+                        self.gmm_list.remove(g)
+
+                self.gmm_list.remove(merged_tuple[0])
+                self.gmm_list.remove(merged_tuple[1])
+                self.gmm_list.append(best_merged_gmm)
+               
+
+            
+            print " size of each cluster:", [ g.M for g in self.gmm_list]
+
+        print "=== Total clustering time: ", time.time()-main_start
+        print "=== Final size of each cluster:", [ g.M for g in self.gmm_list]
+
+        return most_likely
+
+    def cluster_on_subset(self, KL_ntop, NUM_SEG_LOOPS_INIT, NUM_SEG_LOOPS):
+
+        print "CLUSTERING ON SUBSET"
+        main_start = time.time()
+
+        # ----------- Uniform Initialization -----------
+        # Get the events, divide them into an initial k clusters and train each GMM on a cluster
+        per_cluster = self.N/self.init_num_clusters
+        init_training = zip(self.gmm_list,np.vsplit(self.X, range(per_cluster, self.N, per_cluster)))
+
+        for g, x in init_training:
+            g.train(x)
+
+        # ----------- First majority vote segmentation loop ---------
+        for segment_iter in range(0,NUM_SEG_LOOPS_INIT):
+            iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote_indices()
+
+
+        # ----------- Main Clustering Loop using BIC ------------
+
+        # Perform hierarchical agglomeration based on BIC scores
+        best_BIC_score = 1.0
+        total_events = 0
+        total_loops = 0
+        
+        while (best_BIC_score > 0 and len(self.gmm_list) > 1):
+
+            for segment_iter in range(0,NUM_SEG_LOOPS):
+                iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote_indices()
+
+            # Score all pairs of GMMs using BIC
+            best_merged_gmm = None
+            best_BIC_score = 0.0
+            merged_tuple = None
+            merged_tuple_indices = None
+
+            # ------- KL distance to compute best pairs to merge -------
+            if KL_ntop > 0:
+
+                top_K_gmm_pairs = self.gmm_list[0].find_top_KL_pairs(KL_ntop, self.gmm_list)
+                
+                for pair in top_K_gmm_pairs:
+                    score = 0.0
+                    gmm1idx = pair[0]
+                    gmm2idx = pair[1]
+                    g1 = self.gmm_list[gmm1idx]
+                    g2 = self.gmm_list[gmm2idx]
+
+                    if gmm1idx in iter_bic_dict and gmm2idx in iter_bic_dict:
+                        i1 = iter_bic_dict[gmm1idx]
+                        i2 = iter_bic_dict[gmm2idx]
+                        indices = np.concatenate((i1,i2))
+                    elif gmm1idx in iter_bic_dict:
+                        indices = iter_bic_dict[gmm1idx]
+                    elif gmm2idx in iter_bic_dict:
+                        indices = iter_bic_dict[gmm2idx]
+                    else:
+                        continue
+
+                    new_gmm, score = compute_distance_BIC_indices(g1, g2, self.X, indices)
+                    
+                    #print "Comparing BIC %d with %d: %f" % (gmm1idx, gmm2idx, score)
+                    if score > best_BIC_score: 
+                        best_merged_gmm = new_gmm
+                        merged_tuple = (g1, g2)
+                        merged_tuple_indices = (gmm1idx, gmm2idx)
+                        best_BIC_score = score
+
+            # ------- All-to-all comparison of gmms to merge -------
+            else: 
+                l = len(iter_bic_list)
+
+                for gmm1idx in range(l):
+                    for gmm2idx in range(gmm1idx+1, l):
+                        score = 0.0
+                        g1, i1 = iter_bic_list[gmm1idx]
+                        g2, i2 = iter_bic_list[gmm2idx] 
+
+                        indices = np.concatenate((i1,i2))
+                        new_gmm, score = compute_distance_BIC_indices(g1, g2, self.X, indices)
                                                 
                         #print "Comparing BIC %d with %d: %f" % (gmm1idx, gmm2idx, score)
                         if score > best_BIC_score: 
@@ -405,6 +565,7 @@ class EMTester(object):
 
         return most_likely
 
+    
 def print_usage():
         print """    ---------------------------------------------
     Speaker Diarization in Python with ASP usage:
@@ -555,14 +716,15 @@ if __name__ == '__main__':
                                            'num_threads_estep': ['512'],
                                            'num_threads_mstep': ['512'],
                                            'num_event_blocks': ['128'],
-                                           'max_num_dimensions': ['50'],
-                                           'max_num_components': ['122'],
+                                           'max_num_dimensions': ['60'],
+                                           'max_num_components': ['1024'],
                                            'max_num_dimensions_covar_v3': ['40'],
                                            'max_num_components_covar_v3': ['82'],
                                            'diag_only': ['1'],
                                            'max_iters': [num_em_iters],
                                            'min_iters': ['1'],
-                                           'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
+                                           #'covar_version_name': ['V1', 'V2A', 'V2B', 'V3'] },
+                                           'covar_version_name': ['V1'] },
                             'cilk_boost': {
                                 'diag_only': ['1'],
                                 'max_iters': [num_em_iters],
@@ -571,6 +733,7 @@ if __name__ == '__main__':
 
     emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cuda'])
     emt.new_gmm_list(num_comps, num_gmms)
+    #most_likely = emt.cluster_on_subset(kl_ntop, num_seg_iters_init, num_seg_iters)
     most_likely = emt.cluster(kl_ntop, num_seg_iters_init, num_seg_iters)
     emt.write_to_RTTM(outfile, sp, meeting_name, most_likely, num_gmms)
     emt.write_to_GMM(gmmfile)

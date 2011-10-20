@@ -25,6 +25,9 @@ boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
   cudaThreadSynchronize();
   CUT_CHECK_ERROR("Constants Kernel execution failed: ");
 
+  // Compute average variance based on the data
+  compute_average_variance_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_event, d_components, num_dimensions, num_components, num_events);
+  
   // Calculate an epsilon value
   float epsilon = (1+num_dimensions+0.5*(num_dimensions+1)*num_dimensions)*log((float)num_events*num_dimensions)*0.0001;
   int iters;
@@ -52,7 +55,6 @@ boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
 
   while(iters < ${max_iters}) {// || (iters < ${max_iters} && fabs(change) > epsilon)) {
     old_likelihood = likelihood;
-
     
     estep1_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_components,num_events,d_loglikelihoods, d_temploglikelihoods);
     estep2_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_components,num_events,d_likelihoods, d_loglikelihoods);
@@ -74,6 +76,7 @@ boost::python::tuple em_cuda_train${'_'+'_'.join(param_val_list)} (
     // This kernel computes new means
     mstep_means_launch${'_'+'_'.join(param_val_list)}(d_fcs_data_by_dimension,d_components, d_component_memberships, num_dimensions,num_components,num_events);
     cudaThreadSynchronize();
+
             
 %if covar_version_name.upper() in ['2B','V2B','_V2B']:
       CUDA_SAFE_CALL(cudaMemcpy(temp_buffer_2b, zeroR_2b, sizeof(${tempbuff_type_name})*num_dimensions*num_dimensions*num_components, cudaMemcpyHostToDevice) );
