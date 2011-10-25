@@ -251,7 +251,7 @@ class EMTester(object):
 
 
 
-    def segment_majority_vote(self):
+    def segment_majority_vote(self, interval_size):
         
         num_clusters = len(self.gmm_list)
 
@@ -269,8 +269,7 @@ class EMTester(object):
         # Across 2.5 secs of observations, vote on which cluster they should be associated with
 
         iter_training = {}
-        interval_size = 250
-
+        
         for i in range(interval_size, self.N, interval_size):
 
             arr = np.array(most_likely[(range(i-interval_size, i))])
@@ -280,27 +279,27 @@ class EMTester(object):
         arr = np.array(most_likely[(range((self.N/interval_size)*interval_size, self.N))])
         max_gmm = int(stats.mode(arr)[0][0])
         iter_training.setdefault((self.gmm_list[max_gmm], max_gmm),[]).append(self.X[(self.N/interval_size)*interval_size:self.N,:])
-
         
         iter_bic_dict = {}
         iter_bic_list = []
-                
+        
         for gp, data_list in iter_training.iteritems():
             g = gp[0]
             p = gp[1]
             cluster_data =  data_list[0]
+
             for d in data_list[1:]:
                 cluster_data = np.concatenate((cluster_data, d))
-            cluster_data = np.ascontiguousarray(cluster_data)
+            #cluster_data = np.ascontiguousarray(cluster_data)
 
             g.train(cluster_data)
-              
+
             iter_bic_list.append((g,cluster_data))
             iter_bic_dict[p] = cluster_data
-        
+
         return iter_bic_dict, iter_bic_list, most_likely
 
-    def segment_majority_vote_indices(self):
+    def segment_majority_vote_indices(self, interval_size):
         
         num_clusters = len(self.gmm_list)
 
@@ -317,7 +316,6 @@ class EMTester(object):
         # Across 2.5 secs of observations, vote on which cluster they should be associated with
 
         iter_training = {}
-        interval_size = 250
         
         for i in range(interval_size, self.N, interval_size):
         
@@ -329,25 +327,25 @@ class EMTester(object):
         max_gmm = int(stats.mode(arr)[0][0])
         iter_training.setdefault((self.gmm_list[max_gmm], max_gmm),[]).append((self.N/interval_size*interval_size, self.N))
 
-        
         iter_bic_dict = {}
         iter_bic_list = []
-        
+
         for gp, e_tuple_list in iter_training.iteritems():
             g = gp[0]
             p = gp[1]
-            
+
             cluster_indices =  np.array(range(e_tuple_list[0][0], e_tuple_list[0][1],1), dtype=np.int32)
             for d in e_tuple_list[1:]:
                 cluster_indices = np.concatenate((cluster_indices, np.array(range(d[0],d[1],1),dtype=np.int32)))
 
             g.train_on_subset(self.X,cluster_indices)
+            
             iter_bic_list.append((g,cluster_indices))
             iter_bic_dict[p] = cluster_indices
 
         return iter_bic_dict, iter_bic_list, most_likely
 
-    def cluster(self, KL_ntop, NUM_SEG_LOOPS_INIT, NUM_SEG_LOOPS):
+    def cluster(self, KL_ntop, NUM_SEG_LOOPS_INIT, NUM_SEG_LOOPS, seg_length):
 
         print "CLUSTERING"
         main_start = time.time()
@@ -362,7 +360,7 @@ class EMTester(object):
 
         # ----------- First majority vote segmentation loop ---------
         for segment_iter in range(0,NUM_SEG_LOOPS_INIT):
-            iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote()
+            iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote(seg_length)
 
 
         # ----------- Main Clustering Loop using BIC ------------
@@ -376,7 +374,7 @@ class EMTester(object):
 
             total_loops+=1
             for segment_iter in range(0,NUM_SEG_LOOPS):
-                iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote()
+                iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote(seg_length)
 
             # Score all pairs of GMMs using BIC
             best_merged_gmm = None
@@ -437,7 +435,7 @@ class EMTester(object):
                             best_BIC_score = score
 
             # Merge the winning candidate pair if its deriable to do so
-            merge_time = time.time()
+   
             if best_BIC_score > 0.0:
                 gmms_with_events = []
                 for gp in iter_bic_list:
@@ -462,7 +460,7 @@ class EMTester(object):
 
         return most_likely
 
-    def cluster_on_subset(self, KL_ntop, NUM_SEG_LOOPS_INIT, NUM_SEG_LOOPS):
+    def cluster_on_subset(self, KL_ntop, NUM_SEG_LOOPS_INIT, NUM_SEG_LOOPS, seg_length):
 
         print "CLUSTERING ON SUBSET"
         main_start = time.time()
@@ -477,7 +475,7 @@ class EMTester(object):
 
         # ----------- First majority vote segmentation loop ---------
         for segment_iter in range(0,NUM_SEG_LOOPS_INIT):
-            iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote_indices()
+            iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote_indices(seg_length)
 
 
         # ----------- Main Clustering Loop using BIC ------------
@@ -490,7 +488,7 @@ class EMTester(object):
         while (best_BIC_score > 0 and len(self.gmm_list) > 1):
 
             for segment_iter in range(0,NUM_SEG_LOOPS):
-                iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote_indices()
+                iter_bic_dict, iter_bic_list, most_likely = self.segment_majority_vote_indices(seg_length)
 
             # Score all pairs of GMMs using BIC
             best_merged_gmm = None
@@ -552,7 +550,6 @@ class EMTester(object):
 
             # Merge the winning candidate pair if its deriable to do so
 
-            merge_time = time.time()
             if best_BIC_score > 0.0:
                 self.gmm_list.remove(merged_tuple[0])
                 self.gmm_list.remove(merged_tuple[1])
@@ -666,8 +663,13 @@ def get_config_params(config):
     except:
         num_em_iters = 3
 
+    try:
+        seg_length = int(config.get('Diarizer', 'seg_length'))
+    except:
+        seg_length = 250
+
         
-    return meeting_name, f, sp, outfile, gmmfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters
+    return meeting_name, f, sp, outfile, gmmfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters, seg_length
 
 
 
@@ -710,7 +712,7 @@ if __name__ == '__main__':
 
     config.read(config_file)
 
-    meeting_name, f, sp, outfile, gmmfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters = get_config_params(config)
+    meeting_name, f, sp, outfile, gmmfile, num_gmms, num_comps, num_em_iters, kl_ntop, num_seg_iters_init, num_seg_iters, seg_length = get_config_params(config)
     variant_param_spaces = {'base': {},
                             'cuda_boost': {'num_blocks_estep': ['16'],
                                            'num_threads_estep': ['512'],
@@ -733,8 +735,9 @@ if __name__ == '__main__':
 
     emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cuda'])
     emt.new_gmm_list(num_comps, num_gmms)
-    #most_likely = emt.cluster_on_subset(kl_ntop, num_seg_iters_init, num_seg_iters)
-    most_likely = emt.cluster(kl_ntop, num_seg_iters_init, num_seg_iters)
+    most_likely = emt.cluster(kl_ntop, num_seg_iters_init, num_seg_iters, seg_length)
+    #emt.new_gmm_list(num_comps, num_gmms)
+    #most_likely = emt.cluster_on_subset(kl_ntop, num_seg_iters_init, num_seg_iters, seg_length)
     emt.write_to_RTTM(outfile, sp, meeting_name, most_likely, num_gmms)
     emt.write_to_GMM(gmmfile)
 
