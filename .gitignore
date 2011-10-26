@@ -1,2 +1,3 @@
 *.pyc
 codepy.temp.*
+cache

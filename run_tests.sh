@@ -1,5 +1,7 @@
 #!/bin/bash
 
+mkdir -p cache
+
 if [ -n "${CUDA_TESTS+x}" ]
 then
 	PYTHONPATH=`pwd` python tests/cuda_test.py
