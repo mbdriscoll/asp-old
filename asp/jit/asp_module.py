@@ -78,7 +78,7 @@ class InternalModule(object):
 
 class ASPModule(object):
 
-    def __init__(self, use_cuda=False, use_cilk=False):
+    def __init__(self, use_cuda=False, use_cilk=False, use_cloud=False):
         self.specialized_methods = {}
         self.helper_methods = {}
         self.cache_dir = "cache"
@@ -95,6 +95,13 @@ class ASPModule(object):
             self.backends['cilk'].codepy_module.add_to_preamble([cpp_ast.Include('cilk/cilk.h', False)])
             self.backends['cilk'].codepy_toolchain.cc = 'icc'
             self.backends['cilk'].codepy_toolchain.cflags = ['-O2','-gcc', '-ip']
+        if use_cloud:
+            self.backends['cloud'] = InternalModule('cloud',
+                                        None, #self.cache_dir,
+                                        None, #self.backends['cilk_boost'].codepy_module,
+                                        None, #self.backends['cilk_boost'].codepy_toolchain,
+                                        None, #codepy.bpl.BoostPythonModule(),
+                                        None) #codepy.toolchain.guess_toolchain())
 
     def add_library(self, feature, include_dirs, library_dirs=[], libraries=[], name='base'):
         self.backends[name].codepy_toolchain.add_library(feature, include_dirs, library_dirs, libraries)
