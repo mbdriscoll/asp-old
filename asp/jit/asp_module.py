@@ -16,7 +16,7 @@ class InternalModule(object):
         self.dirty = False
         self.cache_dir = cache_dir
         if primary and extension_module: # 
-	    self.compilable = True
+            self.compilable = True
             self.boost_module = boost_module
             self.boost_toolchain = boost_toolchain
             self.extension_module = extension_module
@@ -24,7 +24,7 @@ class InternalModule(object):
             self.codepy_module = extension_module
             self.codepy_toolchain = extension_toolchain
         elif primary and not extension_module:
-	    self.compilable = True 
+            self.compilable = True
             self.codepy_module = boost_module
             self.codepy_toolchain = boost_toolchain
         else: #not primary
@@ -72,9 +72,9 @@ class InternalModule(object):
                                         host_mod_name)
             return ret
         elif self.name =='cuda':
-	    return self.extension_module.compile(self.boost_toolchain, self.extension_toolchain, cache_dir=self.cache_dir)
+            return self.extension_module.compile(self.boost_toolchain, self.extension_toolchain, cache_dir=self.cache_dir)
         else:
-	    return self.codepy_module.compile(self.codepy_toolchain, cache_dir=self.cache_dir)
+            return self.codepy_module.compile(self.codepy_toolchain, cache_dir=self.cache_dir)
 
 class ASPModule(object):
 
@@ -220,7 +220,7 @@ class ASPModule(object):
     def restore_method_timings(self, name, file_name=None):
         method_info = self.specialized_methods[name]
         try: 
-	    f = open(file_name or self.cache_dir+'/'+name+'.vardump', 'r')
+            f = open(file_name or self.cache_dir+'/'+name+'.vardump', 'r')
             obj = pickle.load(f)
             if obj: method_info.set_from_pickled_obj(obj)
             if obj: method_info.database.set_from_pickled_obj(obj, method_info.v_id_set)
