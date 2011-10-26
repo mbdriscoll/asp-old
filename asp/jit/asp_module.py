@@ -39,7 +39,7 @@ class InternalModule(object):
             #Deal with linking in functions with boost compiled with gcc
             host_code = str(self.boost_module.generate()) + "\n"
             #device_code = str(self.extension_module.generate()) + "\n"
-            from codepy.cgen import Line, Module
+            from cgen import Line, Module
             body = self.extension_module.preamble + [Line()] + self.extension_module.mod_body
             device_code = str(Module(body)) + "\n"
 

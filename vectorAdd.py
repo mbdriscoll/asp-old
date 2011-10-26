@@ -2,9 +2,9 @@ import numpy
 import numpy.linalg as la
 import asp.codegen.templating.template as AspTemplate
 import asp.jit.asp_module as aspm
-from codepy.cgen import *
+from cgen import *
 from codepy.cuda import CudaModule
-from codepy.cgen.cuda import CudaGlobal
+from cgen.cuda import CudaGlobal
 
 #c_main_tpl = AspTemplate.Template(filename="templates/basic.mako")
 c_main_tpl = AspTemplate.Template(filename="templates/vectorAdd_main.mako")

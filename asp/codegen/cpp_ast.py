@@ -1,4 +1,4 @@
-from codepy.cgen import *
+from cgen import *
 
 # these are additional classes that, along with codepy's classes, let
 # programmers express the C code as a real AST (not the hybrid AST/strings/etc

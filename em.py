@@ -3,7 +3,7 @@ from numpy.random import *
 from numpy import s_
 import asp.codegen.templating.template as AspTemplate
 import asp.jit.asp_module as asp_module
-from codepy.cgen import *
+from cgen import *
 from codepy.cuda import CudaModule
 import pyublas
 import sys
