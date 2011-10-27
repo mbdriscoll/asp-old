@@ -1,3 +1,4 @@
+from asp.config import MapReduceDetector
 from scala_module import PseudoModule # steal this for now
 
 class MapReduceModule:
@@ -13,6 +14,9 @@ class MapReduceToolchain:
     Tools to execute mapreduce jobs.
     """
     def __init__(self, cluster='local'):
+        if not MapReduceDetector.detect(cluster):
+            raise EnvironmentError("Cannot detect MapReduce platform: %s" %\
+                                   cluster)
         self.cluster = cluster # (local|hadoop|emr)
 
 # TODO this should probably subclass ASPBackend but I can't the imports right.
