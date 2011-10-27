@@ -6,6 +6,7 @@ from variant_history import *
 import sqlite3
 import asp
 import scala_module
+import mapreduce_module
 
 class ASPDB(object):
 
@@ -293,7 +294,7 @@ class ASPModule(object):
 
     #FIXME: specializer should be required.
     def __init__(self, specializer="default_specializer", cache_dir=None, use_cuda=False, use_cilk=False,
-                 use_scala=False):
+                 use_scala=False, use_mapreduce=False):
             
         self.specialized_functions= {}
         self.helper_method_names = []
@@ -330,6 +331,9 @@ class ASPModule(object):
             self.backends["scala"] = ASPBackend(scala_module.ScalaModule(),
                                                 scala_module.ScalaToolchain(),
                                                 self.cache_dir)
+        if use_mapreduce:
+            from mapreduce_module import MapReduceBackend
+            self.backends["mapreduce"] = MapReduceBackend()
 
 
 
@@ -381,6 +385,9 @@ class ASPModule(object):
             block = [cpp_ast.Line(block)]
         self.backends["cuda"].module.add_to_module(block)
         
+    def add_mr_function(self, fname, mapper=None, reducer=None):
+        new_fxn = self.backends["mapreduce"].specialize(fname, mapper, reducer)
+        self.specialized_functions[fname] = new_fxn
 
     def add_function(self, fname, funcs, variant_names=None, run_check_function=None, key_function=None, 
                      backend="c++"):

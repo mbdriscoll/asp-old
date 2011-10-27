@@ -40,7 +40,16 @@ class ArrayDoubler(object):
         mod.add_function("double_using_scala", rendered, backend="scala")
         return mod.double_using_scala(arr)
 
+    def double_using_mapreduce(self, arr):
+        import asp.jit.asp_module as asp_module
+        mod = asp_module.ASPModule(use_mapreduce=True)
+        map_fn = lambda x: [x * 2]
+        red_fn = lambda x,y: x+y
+        mod.add_mr_function("double_using_mapreduce",
+                            mapper=map_fn,
+                            reducer=red_fn)
+        return mod.double_using_mapreduce(arr)
+
     def double(self, arr):
         return map (lambda x: x*2, arr)
-        
 
