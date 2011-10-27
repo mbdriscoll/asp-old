@@ -1,6 +1,7 @@
 from asp.config import MapReduceDetector
 from scala_module import PseudoModule # steal this for now
 
+
 class MapReduceModule:
     """
     A module to support specialization via MapReduce. Does nothing for now,
@@ -18,6 +19,7 @@ class MapReduceToolchain:
             raise EnvironmentError("Cannot detect MapReduce platform: %s" %\
                                    cluster)
         self.cluster = cluster # (local|hadoop|emr)
+
 
 # TODO this should probably subclass ASPBackend but I can't the imports right.
 # For now just override the same methods.
@@ -50,4 +52,22 @@ class MapReduceBackend(object):
         return func
 
     def specialize(self, fname, mapper, reducer):
-        return lambda x: reduce(reducer, map(mapper, x))
+        """
+        Return a callable that runs the given map and reduce functions.
+        """
+
+        # Abstract this away eventually
+        from mrjob.job import MRJob
+        class MRWordCounter(MRJob):
+            def mapper(self, key, line):
+                for word in line.split():
+                    yield word, 1
+            def reducer(self, word, occurrences):
+                yield word, sum(occurrences)
+
+        def callable(*args, **kwargs):
+            mr_job = MRWordCounter()
+            mr_job.sandbox(stdin=args)
+            mr_job.run() # FIXME currently fails for '-r local'
+
+        return callable
