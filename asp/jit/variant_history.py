@@ -92,21 +92,19 @@ class CodeVariantSelector(object):
                 self.perf_database.add_time(key, -1., v_id, v_id_set)
             return None
 
-	search_result = exhaustive_search()
         best = self.perf_database.get_oracular_best(key)
-        return best if best else search_result
+        return best if best else exhaustive_search()
+        return ret_func or error_func
 
     def use_supplied_function_to_generate_a_new_variant():
         pass
 
 class CodeVariants(object):
-    def __init__(self, variant_names, key_func, normalizing_func, param_names, module_names):
+    def __init__(self, variant_names, key_func, param_names):
         self.v_id_list = variant_names
         self.v_id_set = set(variant_names)
         self.make_key = key_func     
-        self.normalize_performance = normalizing_func
         self.param_names = param_names
-        self.module_for_v_id_list = module_names
         self.database = CodeVariantPerformanceDatabase()
         self.limiter = CodeVariantUseCaseLimiter()
         self.selector = CodeVariantSelector(self.database, self.limiter)
@@ -114,25 +112,19 @@ class CodeVariants(object):
     def __contains__(self, v_id):
         return v_id in self.v_id_list
 
-    def get_module_for_v_id(self, v_id):
-        return self.module_for_v_id_list[self.v_id_list.index(v_id)]
-
-    def append(self, variant_names, module_names):
+    def append(self, variant_names):
         self.v_id_list.extend(variant_names)
         self.v_id_set.update(variant_names)
-        self.module_for_v_id_list.extend(module_names)
 
     def get_picklable_obj(self):
         return {
                 'variant_names': self.v_id_list,
-                'module_names': self.module_for_v_id_list,
                 'param_names': self.param_names,
                }
 
     def set_from_pickled_obj(self, obj):
         if self.v_id_list != obj['variant_names']:
-	    print "Warning: Attempted to load pickled performance data for non-matching space of code variants."
-	    return
+            print "Warning: Attempted to load pickled performance data for non-matching space of code variants."
+            return
         self.param_names = obj['param_names']
-        self.module_for_v_id_list = obj['module_names']
 

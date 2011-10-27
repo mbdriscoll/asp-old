@@ -1,257 +1,428 @@
-import codepy, codepy.jit, codepy.toolchain, codepy.bpl
+import codepy, codepy.jit, codepy.toolchain, codepy.bpl, codepy.cuda
 from asp.util import *
 import asp.codegen.cpp_ast as cpp_ast
 import pickle
 from variant_history import *
+import sqlite3
+import asp
+import scala_module
 
-class HelperMethodInfo(object):
-    def __init__(self, func_name, backend_name):
-        self.func_name = func_name
-        self.backend_name = backend_name
+class ASPDB(object):
 
-class InternalModule(object):
+    def __init__(self, specializer, persistent=False):
+        """
+        specializer must be specified so we avoid namespace collisions.
+        """
+        self.specializer = specializer
 
-    def __init__(self, name, cache_dir, boost_module, boost_toolchain, extension_module=None, extension_toolchain=None, primary=True):
+        if persistent:
+            # create db file or load db
+            import tempfile, os
+            self.cache_dir = tempfile.gettempdir() + "/asp_cache"
+            if not os.access(self.cache_dir, os.F_OK):
+                os.mkdir(self.cache_dir)
+            self.db_file = self.cache_dir + "/aspdb.sqlite3"
+            self.connection = sqlite3.connect(self.db_file)
+        else:
+            self.db_file = None
+            self.connection = sqlite3.connect(":memory:")
+
+
+    def create_specializer_table(self):
+        self.connection.execute('create table '+self.specializer+' (fname text, variant text, key text, perf real)')
+        self.connection.commit()
+
+    def close(self):
+        self.connection.close()
+
+    def table_exists(self):
+        """
+        Test if a table corresponding to this specializer exists.
+        """
+        cursor = self.connection.cursor()
+        cursor.execute('select name from sqlite_master where name="%s"' % self.specializer)
+        result = cursor.fetchall()
+        return len(result) > 0
+
+    def insert(self, fname, variant, key, value):
+        if (not self.table_exists()):
+                self.create_specializer_table()
+        self.connection.execute('insert into '+self.specializer+' values (?,?,?,?)',
+            (fname, variant, key, value))
+        self.connection.commit()
+
+    def get(self, fname, variant=None, key=None):
+        """
+        Return a list of entries.  If key and variant not specified, all entries from
+        fname are returned.
+        """
+        if (not self.table_exists()):
+            self.create_specializer_table()
+            return []
+
+        cursor = self.connection.cursor()
+        query = "select * from %s where fname=?" % (self.specializer,)
+        params = (fname,)
+
+        if variant:
+            query += " and variant=?"
+            params += (variant,)
+        
+        if key:
+            query += " and key=?"
+            params += (key,)
+
+        cursor.execute(query, params)
+
+        return cursor.fetchall()
+
+    def update(self, fname, variant, key, value):
+        """
+        Updates an entry in the db.  Overwrites the timing information with value.
+        """
+        if (not self.table_exists()):
+            self.create_specializer_table()
+            self.insert(fname, variant, key, value)
+            return
+
+        query = "update "+self.specializer+" set perf=? where fname=? and variant=? and key=?"
+        self.connection.execute(query, (value, fname, variant, key))
+        self.connection.commit()
+
+    def delete(self, fname, variant, key):
+        """
+        Deletes an entry from the db.
+        """
+        if (not self.table_exists()):
+            return
+
+        query = "delete from "+self.specializer+" where fname=? and variant=? and key=?"
+        self.connection.execute(query, (fname, variant, key))
+        self.connection.commit()
+
+    def destroy_db(self):
+        """
+        Delete the database.
+        """
+        if not self.db_file:
+            return True
+
+        import os
+        try:
+            self.close()
+            os.remove(self.db_file)
+        except:
+            return False
+        else:
+            return True
+
+
+class SpecializedFunction(object):
+    """
+    Class that encapsulates a function that is specialized.  It keeps track of variants,
+    their timing information, which backend, and a function to determine if a variant
+    can run as well as a function to generate keys from parameters.
+
+    The signature for run_check_function is run(self, variant_name, *args, **kwargs).
+    The signature for the key function is key(self, *args, **kwargs), where the args/kwargs are
+    what are passed to the specialized function.
+
+    """
+    
+    def __init__(self, name, backend, db, variant_names=[], variant_funcs=[], run_check_function=None, 
+                 key_function=None):
         self.name = name
-        self.dirty = False
+        self.backend = backend
+        self.db = db
+        self.variant_names = []
+        self.variant_funcs = []
+        self.variant_times = {}
+        
+        for x in xrange(len(variant_names)):
+            self.add_variant(variant_names[x], variant_funcs[x])
+
+        if run_check_function:
+            self.run_check = run_check_function
+
+        if key_function:
+            self.key = key_function
+
+    def run_check(self, variant_name, *args, **kwargs):
+        """
+        Given a variant, check if it can run.  This should be overridden if certain variants can only run
+        for certain input values.
+        """
+        return True
+
+    def key(self, *args, **kwargs):
+        """
+        Function to generate keys.  This should almost always be overridden by a specializer, to make
+        sure the information stored in the key is actually useful.
+        """
+        import hashlib
+        return hashlib.md5(str(args)+str(kwargs)).hexdigest()
+
+
+    def add_variant(self, variant_name, variant_func):
+        """
+        Add a variant of this function.  Must have same call signature.  Variant names must be unique.
+        The variant_func parameter should be a CodePy Function object or a string defining the function.
+        """
+        if variant_name in self.variant_names:
+            raise Exception("Attempting to add a variant with an already existing name %s to %s" %
+                            (variant_name, self.name))
+        self.variant_names.append(variant_name)
+        self.variant_funcs.append(variant_func)
+        
+        if isinstance(self.backend.module, scala_module.ScalaModule):
+            self.backend.module.add_to_module(variant_func)
+            self.backend.module.add_to_init(variant_name)
+        elif isinstance(variant_func, str):
+            self.backend.module.add_to_module([cpp_ast.Line(variant_func)])
+            self.backend.module.add_to_init([cpp_ast.Statement("boost::python::def(\"%s\", &%s)" % (variant_name, variant_name))])
+        else:
+            self.backend.module.add_function(variant_func)
+
+        self.backend.dirty = True
+
+    def pick_next_variant(self, *args, **kwargs):
+        """
+        Logic to pick the next variant to run.  If all variants have been run, then this should return the
+        fastest variant.
+        """
+        # get variants that have run
+        already_run = self.db.get(self.name, key=self.key(args, kwargs))
+
+        if already_run == []:
+            already_run_variant_names = []
+        else:
+            already_run_variant_names = map(lambda x: x[1], already_run)
+
+        # which variants haven't yet run
+        candidates = set(self.variant_names) - set(already_run_variant_names)
+
+        # of these candidates, which variants *can* run
+        for x in candidates:
+            if self.run_check(x, args, kwargs):
+                return x
+
+        # if none left, pick fastest from those that have already run
+        return sorted(already_run, lambda x,y: cmp(x[3],y[3]))[0][1]
+
+    def __call__(self, *args, **kwargs):
+        """
+        Calling an instance of SpecializedFunction will actually call either the next variant to test,
+        or the already-determined best variant.
+        """
+        if self.backend.dirty:
+            self.backend.compile()
+
+        which = self.pick_next_variant(*args, **kwargs)
+
+        import time
+        start = time.time()
+        ret_val = self.backend.get_compiled_function(which).__call__(*args, **kwargs)
+        elapsed = time.time() - start
+        #FIXME: where should key function live?
+        self.db.insert(self.name, which, self.key(args, kwargs), elapsed)
+        return ret_val
+
+class HelperFunction(SpecializedFunction):
+    """
+    HelperFunction defines a SpecializedFunction that is not timed, and usually not called directly
+    (although it can be).
+    """
+    def __init__(self, name, func, backend):
+        self.name = name
+        self.backend = backend
+        self.variant_names, self.variant_funcs = [], []
+        self.add_variant(name, func)
+
+    def __call__(self, *args, **kwargs):
+        if self.backend.dirty:
+            self.backend.compile()
+        return self.backend.get_compiled_function(self.name).__call__(*args, **kwargs)
+
+class ASPBackend(object):
+    """
+    Class to encapsulate a backend for Asp.  A backend is the combination of a CodePy module
+    (which contains the actual functions) and a CodePy compiler toolchain.
+    """
+    def __init__(self, module, toolchain, cache_dir):
+        self.module = module
+        self.toolchain = toolchain
+        self.compiled_module = None
         self.cache_dir = cache_dir
-        if primary and extension_module: # 
-            self.compilable = True
-            self.boost_module = boost_module
-            self.boost_toolchain = boost_toolchain
-            self.extension_module = extension_module
-            self.extension_toolchain = extension_toolchain
-            self.codepy_module = extension_module
-            self.codepy_toolchain = extension_toolchain
-        elif primary and not extension_module:
-            self.compilable = True
-            self.codepy_module = boost_module
-            self.codepy_toolchain = boost_toolchain
-        else: #not primary
-            self.compilable = False
-            self.codepy_module = boost_module
-            self.codepy_toolchain = boost_toolchain
+        self.dirty = True
 
     def compile(self):
-        if not self.compilable: return None
-        self.dirty = False
-        if self.name == 'cilk':
-            #Deal with linking in functions with boost compiled with gcc
-            host_code = str(self.boost_module.generate()) + "\n"
-            #device_code = str(self.extension_module.generate()) + "\n"
-            from cgen import Line, Module
-            body = self.extension_module.preamble + [Line()] + self.extension_module.mod_body
-            device_code = str(Module(body)) + "\n"
-
-            host_toolchain = self.boost_toolchain.copy()
-            host_toolchain.add_library('cilk',[],['/opt/intel/composerxe_mic.0.042/compiler/lib/intel64','/opt/intel/composerxe_mic.0.042/mpirt/lib/intel64','/opt/intel/composerxe_mic.0.042/ipp/../compiler/lib/intel64','/opt/intel/composerxe_mic.0.042/ipp/lib/intel64','/opt/intel/composerxe_mic.0.042/compiler/lib/intel64','/opt/intel/composerxe_mic.0.042/mkl/lib/intel64','/opt/intel/composerxe_mic.0.042/tbb/lib/intel64//cc4.1.0_libc2.4_kernel2.6.16.21'],['cilkrts','irc','svml'])
-
-            from codepy.jit import compile_from_string, extension_from_string
-            from codepy.jit import link_extension
-            host_mod_name, host_object, host_compiled = compile_from_string(
-               host_toolchain, self.boost_module.name, host_code,
-               object=True)
-            device_mod_name, device_object, device_compiled = compile_from_string(
-               self.extension_toolchain, 'cilk', device_code, 'cilk.cpp',
-               object=True)
-            if host_compiled or device_compiled:
-               ret = link_extension(host_toolchain,
-                                     [host_object, device_object],
-                                     host_mod_name)
-            else:
-              import os.path
-              destination_base, first_object = os.path.split(host_object)
-              module_path = os.path.join(destination_base, host_mod_name
-                                         + host_toolchain.so_ext)
-              try:
-                  from imp import load_dynamic
-                  ret = load_dynamic(host_mod_name, module_path)
-              except:
-                  ret = link_extension(host_toolchain,
-                                        [host_object, device_object],
-                                        host_mod_name)
-            return ret
-        elif self.name =='cuda':
-            return self.extension_module.compile(self.boost_toolchain, self.extension_toolchain, cache_dir=self.cache_dir)
+        """
+        Trigger a compile of this backend.  Note that CUDA needs to know about the C++
+        backend as well.
+        """
+        if isinstance(self.module, codepy.cuda.CudaModule):
+            self.compiled_module = self.backends["cuda"].module.compile(self.module.boost_module,
+                                                                        self.backends["cuda"].toolchain,
+                                                                        debug=True, cache_dir=self.cache_dir)
         else:
-            return self.codepy_module.compile(self.codepy_toolchain, cache_dir=self.cache_dir)
+            self.compiled_module = self.module.compile(self.toolchain,
+                                                       debug=True, cache_dir=self.cache_dir)
+        self.dirty = False
+
+    def get_compiled_function(self, name):
+        """
+        Return a callable for a raw compiled function (that is, this must be a variant name rather than
+        a function name).
+        """
+        try:
+            func = getattr(self.compiled_module, name)
+        except:
+            raise AttributeError("Function %s not found in compiled module." % (name,))
+
+        return func
+
 
 class ASPModule(object):
+    """
+    ASPModule is the main coordination class for specializers.  A specializer creates an ASPModule to contain
+    all of its specialized functions, and adds functions/libraries/etc to the ASPModule.
 
-    def __init__(self, use_cuda=False, use_cilk=False, use_cloud=False):
-        self.specialized_methods = {}
-        self.helper_methods = {}
-        self.cache_dir = "cache"
-        self.backends = {} 
-        self.compiled_modules = {} 
-        self.backends['base'] = InternalModule('base', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain())
+    ASPModule uses ASPBackend instances for each backend, ASPDB for its backing db for recording timing info,
+    and instances of SpecializedFunction and HelperFunction for specialized and helper functions, respectively.
+    """
+
+    #FIXME: specializer should be required.
+    def __init__(self, specializer="default_specializer", cache_dir=None, use_cuda=False, use_cilk=False,
+                 use_scala=False):
+            
+        self.specialized_functions= {}
+        self.helper_method_names = []
+
+        self.db = ASPDB(specializer)
+        
+        if cache_dir:
+            self.cache_dir = cache_dir
+        else:
+            import tempfile, os
+            self.cache_dir = tempfile.gettempdir() + "/asp_cache"
+            if not os.access(self.cache_dir, os.F_OK):
+                os.mkdir(self.cache_dir)
+
+        self.dirty = False
+        self.timing_enabled = True
+        self.use_cuda = use_cuda
+
+        self.backends = {}
+        self.backends["c++"] = ASPBackend(codepy.bpl.BoostPythonModule(),
+                                          codepy.toolchain.guess_toolchain(),
+                                          self.cache_dir)
         if use_cuda:
-            self.backends['cuda_boost'] = InternalModule('cuda_boost', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain(), primary=False)
-            self.backends['cuda'] = InternalModule('cuda', self.cache_dir, self.backends['cuda_boost'].codepy_module, self.backends['cuda_boost'].codepy_toolchain, codepy.cuda.CudaModule(self.backends['cuda_boost'].codepy_module), codepy.toolchain.guess_nvcc_toolchain())
-            self.backends['cuda'].codepy_module.add_to_preamble([cpp_ast.Include('cuda.h', False)])
-        if use_cilk:
-            self.backends['cilk_boost'] = InternalModule('cilk_boost', self.cache_dir, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain(), primary=False)
-            self.backends['cilk'] = InternalModule('cilk', self.cache_dir, self.backends['cilk_boost'].codepy_module, self.backends['cilk_boost'].codepy_toolchain, codepy.bpl.BoostPythonModule(), codepy.toolchain.guess_toolchain())
-            self.backends['cilk'].codepy_module.add_to_preamble([cpp_ast.Include('cilk/cilk.h', False)])
-            self.backends['cilk'].codepy_toolchain.cc = 'icc'
-            self.backends['cilk'].codepy_toolchain.cflags = ['-O2','-gcc', '-ip']
-        if use_cloud:
-            self.backends['cloud'] = InternalModule('cloud',
-                                        None, #self.cache_dir,
-                                        None, #self.backends['cilk_boost'].codepy_module,
-                                        None, #self.backends['cilk_boost'].codepy_toolchain,
-                                        None, #codepy.bpl.BoostPythonModule(),
-                                        None) #codepy.toolchain.guess_toolchain())
+            self.backends["cuda"] = ASPBackend(codepy.cuda.CudaModule(self.backends["c++"].module),
+                                               codepy.toolchain.guess_nvcc_toolchain(),
+                                               self.cache_dir)
+            self.backends["cuda"].module.add_to_preamble([cpp_ast.Include('cuda.h', False)])
 
-    def add_library(self, feature, include_dirs, library_dirs=[], libraries=[], name='base'):
-        self.backends[name].codepy_toolchain.add_library(feature, include_dirs, library_dirs, libraries)
+        if use_cilk:
+            self.backends["cilk"] = self.backends["c++"]
+            self.backends["cilk"].toolchain.cc = "icc"
+
+        if use_scala:
+            self.backends["scala"] = ASPBackend(scala_module.ScalaModule(),
+                                                scala_module.ScalaToolchain(),
+                                                self.cache_dir)
+
+
+
+    def add_library(self, feature, include_dirs, library_dirs=[], libraries=[], backend="c++"):
+        self.backends[backend].toolchain.add_library(feature, include_dirs, library_dirs, libraries)
+        
+    def add_cuda_library(self, feature, include_dirs, library_dirs=[], libraries=[]):
+        """
+        Deprecated.  Use add_library(..., backend="cuda")
+        """
+        self.add_library(feature, include_dirs, library_dirs, libraries, backend="cuda")
 
     def add_cuda_arch_spec(self, arch):
         archflag = '-arch='
         if 'sm_' not in arch: archflag += 'sm_' 
         archflag += arch
-        self.backends['cuda'].codepy_toolchain.cflags += [archflag]
+        self.backends["cuda"].toolchain.cflags += [archflag]
 
-    def add_header(self, include_file, backend_name='base'):
-        self.backends[backend_name].codepy_module.add_to_preamble([cpp_ast.Include(include_file, False)])
+    def add_header(self, include_file, backend="c++"):
+        self.backends[backend].module.add_to_preamble([cpp_ast.Include(include_file, False)])
 
-    def add_to_preamble(self, pa, backend_name='base'):
+    def add_cuda_header(self, include_file):
+        """
+        Deprecated.  Use add_header(..., backend="cuda").
+        """
+        self.add_header(include_file, backend="cuda")
+
+    def add_to_preamble(self, pa, backend="c++"):
         if isinstance(pa, str):
             pa = [cpp_ast.Line(pa)]
-        self.backends[backend_name].codepy_module.add_to_preamble(pa)
+        self.backends[backend].module.add_to_preamble(pa)
 
-    def add_to_init(self, stmt, backend_name='base'):
+    def add_to_cuda_preamble(self, pa):
+        """
+        Deprecated.  Use add_to_preamble(..., backend="cuda").
+        """
+        if isinstance(pa, str):
+            pa = [cpp_ast.Line(pa)]
+        self.add_to_preamble(pa, backend="cuda")
+        
+    def add_to_init(self, stmt, backend="c++"):
         if isinstance(stmt, str):
             stmt = [cpp_ast.Line(stmt)]
-        self.backends[backend_name].codepy_module.add_to_init(stmt)
+        self.backends[backend].module.add_to_init(stmt)
 
-    def add_to_module(self, block, backend_name='base'):
+    def add_to_cuda_module(self, block):
+        #FIXME: figure out use case for this and replace
         if isinstance(block, str):
             block = [cpp_ast.Line(block)]
-        self.backends[backend_name].codepy_module.add_to_module(block)
-
-    def get_name_from_func(self, func):
-        """
-        returns the name of a function from a CodePy FunctionBody object
-        """
-        return func.fdecl.subdecl.name
-
-    def add_function_helper(self, fbody, fname=None, backend_name='base'):
-        if isinstance(fbody, str):
-            if fname == None:
-                raise Exception("Cannot add a function as a string without specifying the function's name")
-            self.backends[backend_name].codepy_module.add_to_module([cpp_ast.Line(fbody)])
-            self.backends[backend_name].codepy_module.add_to_init([cpp_ast.Statement(
-                        "boost::python::def(\"%s\", &%s)" % (fname, fname))])
-        else:
-            self.backends[backend_name].codepy_module.add_function(fbody)
-        self.backends[backend_name].dirty = True
-        if backend_name.endswith('_boost'): self.backends[backend_name[:-6]].dirty = True
-
-    def add_function_with_variants(self, variant_bodies, func_name, variant_names, key_maker=lambda name, *args, **kwargs: (name), normalizer=lambda results, time: time, limit_funcs=None, compilable=None, param_names=None, backend_name='base'):
-        limit_funcs = limit_funcs or [lambda name, *args, **kwargs: True]*len(variant_names) 
-        compilable = compilable or [True]*len(variant_names)
-        param_names = param_names or ['Unknown']*len(variant_names)
-        method_info = self.specialized_methods.get(func_name, None)
-        if not method_info:
-            method_info = CodeVariants(variant_names, key_maker, normalizer, param_names, [backend_name]*len(variant_names))
-            method_info.limiter.append(variant_names, limit_funcs, compilable)
-        else:
-            method_info.append(variant_names, [backend_name]*len(variant_names))
-            method_info.database.clear_oracle()
-            method_info.limiter.append(variant_names, limit_funcs, compilable)
-        for x in range(0,len(variant_bodies)):
-            self.add_function_helper(variant_bodies[x], fname=variant_names[x], backend_name=backend_name)
-        self.specialized_methods[func_name] = method_info
-
-    def add_function(self, funcs, fname=None, variant_names=None, backend_name='base'):
-        """
-        self.add_function(func) takes func as either a generable AST or a string, or
-        list of variants in either format.
-        """
-        if variant_names:
-            self.add_function_with_variants(funcs, fname, variant_names, backend_name=backend_name)
-        else:
-            variant_funcs = [funcs]
-            if not fname:
-                fname = self.get_name_from_func(funcs)
-            variant_names = [fname]
-            self.add_function_with_variants(variant_funcs, fname, variant_names, backend_name=backend_name)
-
-    def add_helper_function(self, func_name, backend_name='base'):
-        method_info = self.helper_methods.get(func_name, None)
-        if method_info:
-            raise Exception("Overwrote helper function info; duplicate method name!")
-        else:
-            method_info = HelperMethodInfo(func_name, backend_name)
-        self.add_function_helper("", fname=func_name, backend_name=backend_name)
-        self.helper_methods[func_name] = method_info
-     
-    def specialized_func(self, name):
-        import time
-        def special(*args, **kwargs):
-            method_info = self.specialized_methods[name]
-            key = method_info.make_key(name,*args,**kwargs)
-            v_id = method_info.selector.get_v_id_to_run(method_info.v_id_set, key,*args,**kwargs)
-            if not v_id: 
-                raise Exception("No variant of method found to run on input size %s on the specified device" % str(args))
-           
-            backend_name = method_info.get_module_for_v_id(v_id)
-            backend_name = backend_name[:-6] if backend_name.endswith('_boost') else backend_name
-            module = self.compiled_modules[backend_name]
-            real_func = module.__getattribute__(v_id)
-            start_time = time.time() 
-            results = real_func(*args, **kwargs)
-            elapsed = time.time() - start_time
-            value_to_put_in_database = method_info.normalize_performance(results, elapsed)
-            method_info.database.add_time( key, value_to_put_in_database, v_id, method_info.v_id_set)
-            return results
-        return special
-
-    def helper_func(self, name):
-        def helper(*args, **kwargs):
-            method_info = self.helper_methods[name]
-            backend_name = method_info.backend_name[:-6] if method_info.backend_name.endswith('_boost') else method_info.backend_name
-            real_func = self.compiled_modules[backend_name].__getattribute__(name)
-            return real_func(*args, **kwargs)
-        return helper
-
-    def save_method_timings(self, name, file_name=None):
-        method_info = self.specialized_methods[name]
-        f = open(file_name or self.cache_dir+'/'+name+'.vardump', 'w')
-        d = method_info.get_picklable_obj()
-        d.update(method_info.database.get_picklable_obj())
-        pickle.dump( d, f)
-        f.close()
-
-    def restore_method_timings(self, name, file_name=None):
-        method_info = self.specialized_methods[name]
-        try: 
-            f = open(file_name or self.cache_dir+'/'+name+'.vardump', 'r')
-            obj = pickle.load(f)
-            if obj: method_info.set_from_pickled_obj(obj)
-            if obj: method_info.database.set_from_pickled_obj(obj, method_info.v_id_set)
-            f.close()
-        except IOError: pass
-
-    def clear_method_timings(self, name):
-        method_info = self.specialized_methods[name]
-        method_info.database.clear()
-
-    def compile_module(self, backend_name):
-        self.compiled_modules[backend_name] = self.backends[backend_name].compile()
-
-    def compile_all(self):
-        for name, backend in filter(lambda x: x[1].dirty and x[1].compilable, self.backends.iteritems()):
-            self.compiled_modules[name] = backend.compile()
+        self.backends["cuda"].module.add_to_module(block)
         
+
+    def add_function(self, fname, funcs, variant_names=None, run_check_function=None, key_function=None, 
+                     backend="c++"):
+        """
+        Add a specialized function to the Asp module.  funcs can be a list of variants, but then
+        variant_names is required (also a list).  Each item in funcs should be a string function or
+        a cpp_ast FunctionDef.
+        """
+        if not isinstance(funcs, list):
+            funcs = [funcs]
+            variant_names = [fname]
+
+        self.specialized_functions[fname] = SpecializedFunction(fname, self.backends[backend], self.db, variant_names,
+                                                                variant_funcs=funcs, 
+                                                                run_check_function=run_check_function,
+                                                                key_function=key_function)
+
+    def add_helper_function(self, fname, func, backend="c++"):
+        """
+        Add a helper function, which is a specialized function that it not timed and has a single variant.
+        """
+        self.specialized_functions[fname] = HelperFunction(fname, func, self.backends[backend])
+
+
     def __getattr__(self, name):
-        if name in self.specialized_methods:
-            self.compile_all()
-            return self.specialized_func(name)
-        elif name in self.helper_methods:
-            self.compile_all()
+        if name in self.specialized_functions:
+            if self.dirty:
+                self.compile()
+            return self.specialized_functions[name]
+        elif name in self.helper_method_names:
             return self.helper_func(name)
         else:
             raise AttributeError("No method %s found; did you add it?" % name)
+
+    def generate(self):
+        """
+        Utility function for, during development, dumping out the generated
+        source from all the underlying backends.
+        """
+        src = ""
+        for x in self.backends.keys():
+            src += str(self.backends[x].module.generate())
+
+        return src
 

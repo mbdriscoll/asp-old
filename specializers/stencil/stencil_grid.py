@@ -1,4 +1,8 @@
+"""A two-dimension grid of numeric values, used for input and output to a stencil kernel.
+"""
+
 import numpy
+import math
 
 class StencilGrid(object):
 
@@ -16,6 +20,7 @@ class StencilGrid(object):
     # want this to be indexable
     def __getitem__(self, x):
         return self.data[x]
+
     def __setitem__(self, x, y):
         self.data[x] = y
 
@@ -38,7 +43,6 @@ class StencilGrid(object):
         self.neighbor_definition.append([tuple([0 for x in range(self.dim)])])
         self.neighbor_definition.append([])
 
-        import copy
         for x in range(self.dim):
             for y in [0, 1, -1]:
                 tmp = list(self.neighbor_definition[0][0])
@@ -58,7 +62,7 @@ class StencilGrid(object):
         import itertools
         all_dims = [range(self.ghost_depth,self.shape[x]-self.ghost_depth) for x in range(0,self.dim)]
         for item in itertools.product(*all_dims):
-            yield list(item)
+            yield tuple(item)
 
     def border_points(self):
         """
@@ -66,14 +70,24 @@ class StencilGrid(object):
         mode; in SEJITS mode, it should be executed only in the translated
         language/library.
         """
-        pass
+        # TODO
+        return []
 
 
-    def neighbors(self, center, dist):
+    def neighbors(self, center, neighbors_id):
         """
-        Returns a list of neighbors that are at distance dist from the center
-        point.  Uses neighbor_definition to determine what the neighbors are.
+        Returns the list of neighbors with the given neighbors_id. By
+        default, IDs 0 and 1 give the list consisting of all
+        points at a distance of 0 and 1 from the center point,
+        respectively. Uses neighbor_definition to determine what the
+        neighbors are.
         """
         # return tuples for each neighbor
-        for neighbor in self.neighbor_definition[dist]:
+        for neighbor in self.neighbor_definition[neighbors_id]:
             yield tuple(map(lambda a,b: a+b, list(center), list(neighbor)))
+
+    def __repr__(self):
+        return self.data.__repr__()
+
+def distance(x,y):
+    return math.sqrt(sum([(x[i]-y[i])**2 for i in range(0,len(x))]))

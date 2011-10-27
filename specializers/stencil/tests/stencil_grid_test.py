@@ -1,5 +1,6 @@
-import unittest
+import unittest2 as unittest
 from stencil_grid import *
+import math
 
 class BasicTests(unittest.TestCase):
     def test_init(self):
@@ -34,14 +35,14 @@ class BasicTests(unittest.TestCase):
         # 2D
         grid = StencilGrid([5,5])
         pts = [x for x in grid.interior_points()]
-        self.failIf(pts[0] != [1,1])
+        self.failIf(list(pts[0]) != [1,1])
         self.failIf(len(pts) != 9)
 
     def test_interior_iterator_3D(self):
         # 3D
         grid = StencilGrid([5,5,5])
         pts = [x for x in grid.interior_points()]
-        self.failIf(pts[0] != [1,1,1])
+        self.failIf(list(pts[0]) != [1,1,1])
         self.failIf(len(pts) != 27)
     
     def test_neighbors_iterator(self):
@@ -53,7 +54,10 @@ class BasicTests(unittest.TestCase):
 
         grid = StencilGrid([5])
         self.assertEquals(len([x for x in grid.neighbors([1],1)]), 2)
-        
+
+    def test_distance(self):
+        self.assertAlmostEquals(distance((1,2), (-1,3)), math.sqrt(5))
+        self.assertEquals(distance((5,5), (5,5)), 0)
 
 if __name__ == '__main__':
     unittest.main()
