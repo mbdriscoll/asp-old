@@ -58,3 +58,38 @@ class PlatformDetector(object):
         
     def read_cpu_info(self):
         return open("/proc/cpuinfo", "r").readlines()
+
+
+class MapReduceDetector(object):
+    """
+    Detect if a MapReduce platform is available.
+    """
+    def __init__(self):
+        """ Fail on instantiation. """
+        raise RuntimeError("MapReduceDetector should not be instantiated.")
+
+    @classmethod
+    def detect(cls, platform='local'):
+        """ Detect if a particular platform is available. """
+        import os
+        try:
+            import mrjob
+            if (platform == 'emr'):
+                aws_access_key_id = os.environ["AWS_ACCESS_KEY_ID"]
+                aws_secret_acces_key = os.environ["AWS_SECRET_ACCESS_KEY"]
+            elif (platform == 'hadoop'):
+                hadoop_home = os.environ["HADOOP_HOME"]
+            elif (platform == 'local'):
+                pass
+            else:
+                return False
+        except ImportError:
+            return False
+        except KeyError:
+            return False
+        return platform
+
+    @classmethod
+    def get_platforms(cls):
+        """ Returns a list of available MapReduce Platforms. """
+        return filter(cls.detect, ['local', 'hadoop', 'emr'])

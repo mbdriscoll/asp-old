@@ -56,6 +56,14 @@ class CPUInfoTests(unittest.TestCase):
         compilers = PlatformDetector().get_compilers()
         self.assertTrue("gcc" in compilers)
 
+class MapReduceDetectorTests(unittest.TestCase):
+    def test_detect(self):
+        self.assertTrue(MapReduceDetector.detect("local"))
+        self.assertFalse(MapReduceDetector.detect("toy_elephant"))
+
+    def test_platforms(self):
+        platforms = MapReduceDetector.get_platforms()
+        self.assertTrue("local" in platforms)
         
 
 if __name__ == '__main__':
