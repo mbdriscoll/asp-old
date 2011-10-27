@@ -14,7 +14,7 @@ class BasicTests(unittest.TestCase):
         self.assertEquals(result[0], 2.0)
 
     def test_mapreduce(self):
-        arr = [1.0, 2.0, 3.0]
+        arr = [1.0, 2.0, 3.0, 4.0]
         result = ArrayDoubler().double_using_mapreduce(arr)
         self.assertEquals(result, map(lambda x: x*2, arr))
 

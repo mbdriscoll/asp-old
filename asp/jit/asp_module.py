@@ -386,7 +386,7 @@ class ASPModule(object):
         self.backends["cuda"].module.add_to_module(block)
         
     def add_mr_function(self, fname, mapper=None, reducer=None):
-        new_fxn = self.backends["mapreduce"].specialize(fname, mapper, reducer)
+        new_fxn = self.backends["mapreduce"].specialize(mapper, reducer)
         self.specialized_functions[fname] = new_fxn
 
     def add_function(self, fname, funcs, variant_names=None, run_check_function=None, key_function=None, 

@@ -52,4 +52,3 @@ class ArrayDoubler(object):
 
     def double(self, arr):
         return map (lambda x: x*2, arr)
-

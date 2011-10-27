@@ -35,7 +35,7 @@ class MapReduceBackend(object):
         """
         Trigger a compile of this backend.
         """
-        pass
+        raise NotImplementedError
 
     def get_compiled_function(self, name):
         """
@@ -48,19 +48,23 @@ class MapReduceBackend(object):
         except:
             raise AttributeError("Function %s not found in compiled module." %
                                  (name,))
-
         return func
 
-    def specialize(self, fname, mapper, reducer):
+    def specialize(self, mapper, reducer):
         """
         Return a callable that runs the given map and reduce functions.
         """
+        from asp.jit.mapreduce_support import AspMRJob
+        from cStringIO import StringIO
+        from sys import stderr
 
-        def callable(*args, **kwargs):
-            from asp.jit.mapreduce_support import AspMRJob 
-            mr_job = AspMRJob()
-            mr_job.sandbox()
-            mr_job.run()
-            print "OUTPUT", mr_job.parse_output()
+        def mr_callable(*args, **kwargs):
+            my_input, my_output = map(str, args[0]), StringIO()
+            mr_job = AspMRJob().sandbox(stdin=my_input, stdout=my_output)
+            runner = mr_job.make_runner()
+            #print >>stderr, "MYSTDIN<%s>" % my_input
+            runner.run()
+            #print >>stderr, "MYSTDOUT <%s>" % my_output.getvalue()
+            #print >>stderr, "MYOUTPUT <%s>" % mr_job.parse_output()
 
-        return callable
+        return mr_callable
