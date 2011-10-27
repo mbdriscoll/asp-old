@@ -1,4 +1,4 @@
-#from asp.config import MapReduceDetector
+from asp.config import MapReduceDetector
 from scala_module import PseudoModule # steal this for now
 
 
@@ -15,9 +15,9 @@ class MapReduceToolchain:
     Tools to execute mapreduce jobs.
     """
     def __init__(self, cluster='local'):
-#        if not MapReduceDetector.detect(cluster):
-#            raise EnvironmentError("Cannot detect MapReduce platform: %s" %\
-#                                   cluster)
+        if not MapReduceDetector.detect(cluster):
+            raise EnvironmentError("Cannot detect MapReduce platform: %s" %\
+                                   cluster)
         self.cluster = cluster # (local|hadoop|emr)
 
 
@@ -57,24 +57,10 @@ class MapReduceBackend(object):
         """
 
         def callable(*args, **kwargs):
-            mr_job = MRWordCounter()
+            from asp.jit.mapreduce_support import AspMRJob 
+            mr_job = AspMRJob()
             mr_job.sandbox()
             mr_job.run()
+            print "OUTPUT", mr_job.parse_output()
 
         return callable
-
-# Abstract this away eventually
-from mrjob.job import MRJob
-class MRWordCounter(MRJob):
-    DEFAULT_OUTPUT_PROTOCOL = 'raw_value'
-    def mapper(self, key, value):
-        yield 0, [int(value) * 2]
-    def reducer(self, key, values):
-        v = map(lambda x:x, values)
-        yield (0, reduce(lambda x,y: x+y, v))
-
-# this appears to be necessary because this script will be called as __main__ on
-# every worker node
-if __name__ == '__main__':
-    job = MRWordCounter()
-    job.run()
