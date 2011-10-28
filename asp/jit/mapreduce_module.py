@@ -14,7 +14,7 @@ class MapReduceToolchain:
     """
     Tools to execute mapreduce jobs.
     """
-    def __init__(self, cluster='emr'):
+    def __init__(self, cluster='local'):
         MapReduceDetector.detect_or_exit(cluster)
         self.cluster = cluster # (local|hadoop|emr)
 
