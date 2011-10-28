@@ -69,7 +69,7 @@ class MapReduceDetector(object):
         raise RuntimeError("MapReduceDetector should not be instantiated.")
 
     @classmethod
-    def detect(cls, platform='local'):
+    def detect(cls, platform):
         """ Detect if a particular platform is available. """
         import os
         try:
@@ -93,3 +93,8 @@ class MapReduceDetector(object):
     def get_platforms(cls):
         """ Returns a list of available MapReduce Platforms. """
         return filter(cls.detect, ['local', 'hadoop', 'emr'])
+
+    @classmethod
+    def detect_or_exit(cls, platform):
+        if not cls.detect(platform):
+            raise EnvironmentError("Unable to detect '%s' MapReduce platform. See configuration instructions for all platforms at http://packages.python.org/mrjob/writing-and-running.html#running-on-emr" % platform)

@@ -14,10 +14,8 @@ class MapReduceToolchain:
     """
     Tools to execute mapreduce jobs.
     """
-    def __init__(self, cluster='local'):
-        if not MapReduceDetector.detect(cluster):
-            raise EnvironmentError("Cannot detect MapReduce platform: %s" %\
-                                   cluster)
+    def __init__(self, cluster='emr'):
+        MapReduceDetector.detect_or_exit(cluster)
         self.cluster = cluster # (local|hadoop|emr)
 
 
@@ -55,16 +53,16 @@ class MapReduceBackend(object):
         Return a callable that runs the given map and reduce functions.
         """
         from asp.jit.mapreduce_support import AspMRJob
-        from cStringIO import StringIO
         from sys import stderr
 
         def mr_callable(*args, **kwargs):
-            my_input, my_output = map(str, args[0]), StringIO()
-            mr_job = AspMRJob().sandbox(stdin=my_input, stdout=my_output)
-            runner = mr_job.make_runner()
-            #print >>stderr, "MYSTDIN<%s>" % my_input
+            my_input = map(str, args[0])
+            mr_args = ['-r', self.toolchain.cluster]
+            job = AspMRJob(args=mr_args).sandbox(stdin=my_input)
+            runner = job.make_runner()
             runner.run()
-            #print >>stderr, "MYSTDOUT <%s>" % my_output.getvalue()
-            #print >>stderr, "MYOUTPUT <%s>" % mr_job.parse_output()
+            kv_pairs = map(job.parse_output_line, runner.stream_output())
+            assert len(kv_pairs) == 1
+            return kv_pairs[0][1]
 
         return mr_callable
