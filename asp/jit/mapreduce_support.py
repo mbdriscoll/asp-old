@@ -43,6 +43,15 @@ class AspMRJob(MRJob):
         config['python_bin'] = '/home/hadoop/opt/local/bin/python'
         return config
 
+    def hadoop_job_runner_kwargs(self):
+        """
+        Hadoop specific configuration options.
+        """
+        config = super(AspMRJob, self).hadoop_job_runner_kwargs()
+        config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
+        #config['setup_cmds'] += ["export LD_LIBRARY_PATH=/global/homes/d/driscoll/carver/opt/local/lib:$LD_LIBRARY_PATH"]
+        return config
+
 # this appears to be necessary because this script will be called as __main__ on
 # every worker node.
 if __name__ == '__main__':
