@@ -385,8 +385,8 @@ class ASPModule(object):
             block = [cpp_ast.Line(block)]
         self.backends["cuda"].module.add_to_module(block)
         
-    def add_mr_function(self, fname, mapper=None, reducer=None):
-        new_fxn = self.backends["mapreduce"].specialize(mapper, reducer)
+    def add_mr_function(self, fname, AspMRJobCls):
+        new_fxn = self.backends["mapreduce"].specialize(AspMRJobCls)
         self.specialized_functions[fname] = new_fxn
 
     def add_function(self, fname, funcs, variant_names=None, run_check_function=None, key_function=None, 
@@ -432,4 +432,3 @@ class ASPModule(object):
             src += str(self.backends[x].module.generate())
 
         return src
-
