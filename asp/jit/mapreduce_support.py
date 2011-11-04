@@ -36,6 +36,7 @@ class AspMRJob(MRJob):
         """
         config = super(AspMRJob, self).job_runner_kwargs()
         config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
+        config['cmdenv']['PYTHONPATH'] = "/Users/driscoll/sejits/asp" # we need asp on the pythonpath for worker tasks. TODO do this better
         return config
 
     def emr_job_runner_kwargs(self):
@@ -57,7 +58,7 @@ class AspMRJob(MRJob):
         """
         config = super(AspMRJob, self).hadoop_job_runner_kwargs()
         config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
-        #config['setup_cmds'] += ["export LD_LIBRARY_PATH=/global/homes/d/driscoll/carver/opt/local/lib:$LD_LIBRARY_PATH"]
+        config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
         return config
 
 # this appears to be necessary because this script will be called as __main__ on

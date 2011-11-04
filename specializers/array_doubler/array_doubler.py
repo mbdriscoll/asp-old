@@ -1,4 +1,11 @@
-# really dumb example of using templates w/asp
+from asp.jit import mapreduce_support as mr
+
+class ArrayDoublerMRJob(mr.AspMRJob):
+    def mapper(self, key, value):
+        yield 1, [float(value) * 2]
+    def reducer(self, key, values):
+        val = reduce(lambda x,y: x+y, values)
+        yield 1, val
 
 class ArrayDoubler(object):
     
@@ -43,12 +50,13 @@ class ArrayDoubler(object):
     def double_using_mapreduce(self, arr):
         import asp.jit.asp_module as asp_module
         mod = asp_module.ASPModule(use_mapreduce=True)
-        map_fn = lambda x: [x * 2]
-        red_fn = lambda x,y: x+y
-        mod.add_mr_function("double_using_mapreduce",
-                            mapper=map_fn,
-                            reducer=red_fn)
+        mod.add_mr_function("double_using_mapreduce", ArrayDoublerMRJob)
         return mod.double_using_mapreduce(arr)
 
     def double(self, arr):
         return map (lambda x: x*2, arr)
+
+# this appears to be necessary because this script will be called as __main__ on
+# every worker node.
+if __name__ == '__main__':
+    ArrayDoublerMRJob().run()
