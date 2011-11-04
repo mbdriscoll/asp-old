@@ -30,6 +30,14 @@ class AspMRJob(MRJob):
         val.sort() # this is serial => bad
         yield 1, val
 
+    def job_runner_kwargs(self):
+        """
+        General configuration options.
+        """
+        config = super(AspMRJob, self).job_runner_kwargs()
+        config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
+        return config
+
     def emr_job_runner_kwargs(self):
         """
         Elastic MapReduce specific configuration options.
