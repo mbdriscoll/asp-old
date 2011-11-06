@@ -30,6 +30,12 @@ class AspMRJob(MRJob):
         val.sort() # this is serial => bad
         yield 1, val
 
+    def job_runner_kwargs(self):
+        config = super(AspMRJob, self).job_runner_kwargs()
+        # we need asp on the pythonpath for worker tasks. TODO do this better
+        config['cmdenv']['PYTHONPATH'] = "/Users/driscoll/sejits/asp"
+        return config
+
     def emr_job_runner_kwargs(self):
         """
         Elastic MapReduce specific configuration options.
@@ -41,6 +47,15 @@ class AspMRJob(MRJob):
         config['setup_cmds'] += ["export PATH=/home/hadoop/opt/local/bin:$PATH"]
         config['setup_cmds'] += ["export LD_LIBRARY_PATH=/home/hadoop/opt/local/lib:$LD_LIBRARY_PATH"]
         config['python_bin'] = '/home/hadoop/opt/local/bin/python'
+        return config
+
+    def hadoop_job_runner_kwargs(self):
+        """
+        Hadoop specific configuration options.
+        """
+        config = super(AspMRJob, self).hadoop_job_runner_kwargs()
+        config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
+        config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
         return config
 
 # this appears to be necessary because this script will be called as __main__ on

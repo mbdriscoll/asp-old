@@ -48,7 +48,7 @@ class MapReduceBackend(object):
                                  (name,))
         return func
 
-    def specialize(self, mapper, reducer):
+    def specialize(self, AspMRJobCls):
         """
         Return a callable that runs the given map and reduce functions.
         """
@@ -58,7 +58,7 @@ class MapReduceBackend(object):
         def mr_callable(*args, **kwargs):
             my_input = map(str, args[0])
             mr_args = ['-r', self.toolchain.cluster]
-            job = AspMRJob(args=mr_args).sandbox(stdin=my_input)
+            job = AspMRJobCls(args=mr_args).sandbox(stdin=my_input)
             runner = job.make_runner()
             runner.run()
             kv_pairs = map(job.parse_output_line, runner.stream_output())
