@@ -348,6 +348,9 @@ class EMTester(object):
 
     
     def compute_All_BICs(self, iteration_bic_list, cloud_flag):
+        """
+        Finds the GMM pair with the best score by comparing ALL gmm pairs   
+        """
     
         if cloud_flag:
             result = AllPairsBicScore().all_pairs_BIC_using_mapreduce(iteration_bic_list)

@@ -84,7 +84,7 @@ class AllPairsBicScore(object):
     
     def all_pairs_BIC_serial(self, iteration_bic_list):
         """
-        Computes the BIC score for all pairs in a serial way and returns
+        Computes the BIC score for all pairs in a "serial" way and returns
         the pair with the best score
         """
         print "Serial execution"
