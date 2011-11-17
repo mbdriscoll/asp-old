@@ -19,6 +19,7 @@ class ArrayDoubler(object):
 
         import asp.jit.asp_module as asp_module
         mod = asp_module.ASPModule()
+        mod.backends["c++"].toolchain.cflags.append('-fPIC')
         # remember, must specify function name when using a string
         mod.add_function("double_in_c", rendered)
         return mod.double_in_c(arr)
