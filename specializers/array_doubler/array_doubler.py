@@ -15,6 +15,7 @@ class ArrayDoubler(object):
         rendered = mytemplate.render(num_items=len(arr))
 
         mod = asp_module.ASPModule()
+        mod.backends["c++"].toolchain.cflags.append('-fPIC')
         # remember, must specify function name when using a string
         mod.add_function("double_in_c", rendered)
         return mod.double_in_c(arr)
