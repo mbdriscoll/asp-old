@@ -1,8 +1,11 @@
-from asp.jit import mapreduce_support as mr, asp_module
+from asp.jit import mapreduce_support as mr
 
 class ArrayDoublerMRJob(mr.AspMRJob):
     def mapper(self, key, value):
-        yield 1, [float(value) * 2]
+        try:
+            yield 1, 2*float(value)
+        except ValueError:
+            pass
 
 class ArrayDoubler(object):
     
@@ -14,6 +17,7 @@ class ArrayDoubler(object):
         mytemplate = template.Template(filename="templates/double_template.mako", disable_unicode=True)
         rendered = mytemplate.render(num_items=len(arr))
 
+        from asp.jit import asp_module
         mod = asp_module.ASPModule()
         mod.backends["c++"].toolchain.cflags.append('-fPIC')
         # remember, must specify function name when using a string
@@ -21,6 +25,7 @@ class ArrayDoubler(object):
         return mod.double_in_c(arr)
 
     def double_using_scala(self, arr):
+        from asp.jit import asp_module
         mod = asp_module.ASPModule(use_scala=True)
         # remember, must specify function name when using a string
         rendered = """
@@ -44,9 +49,12 @@ class ArrayDoubler(object):
         return mod.double_using_scala(arr)
 
     def double_using_mapreduce(self, arr):
+        from asp.jit import asp_module
         mod = asp_module.ASPModule(use_mapreduce=True)
-        mod.add_mr_function("double_using_mapreduce", ArrayDoublerMRJob)
-        return mod.double_using_mapreduce(arr)
+        mod.add_mr_function("double_mr", ArrayDoublerMRJob)
+        kv_pairs = mod.double_mr(arr)
+        print "Raw kv pairs from mrjob:", kv_pairs
+        return map(lambda (k, v): v, kv_pairs)
 
     def double(self, arr):
         return map (lambda x: x*2, arr)
