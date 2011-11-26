@@ -14,26 +14,16 @@ class AspMRJob(MRJob):
     """
     Encapsulates an Asp-specific MapReduce job.
     """
-
-    def mapper(self, key, value):
-        """
-        Doubles value and stores it in a list for easy
-        concantenation in the reduce phase.
-        """
-        yield 1, [float(value) * 2]
-
-    def reducer(self, key, values):
-        """
-        Concatenates lists in VALUES.
-        """
-        val = reduce(lambda x,y: x+y, values)
-        val.sort() # this is serial => bad
-        yield 1, val
-
     def job_runner_kwargs(self):
+        """
+        General configuration options.
+        """
         config = super(AspMRJob, self).job_runner_kwargs()
-        # we need asp on the pythonpath for worker tasks. TODO do this better
-        config['cmdenv']['PYTHONPATH'] = "/Users/driscoll/sejits/asp"
+        config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
+        config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
+        config['cmdenv']["PYTHONPATH"] = '/global/homes/d/driscoll/carver/asp:/global/homes/d/driscoll/carver'
+        config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
+        #config['bootstrap_mrjob'] = False
         return config
 
     def emr_job_runner_kwargs(self):
@@ -41,8 +31,6 @@ class AspMRJob(MRJob):
         Elastic MapReduce specific configuration options.
         """
         config = super(AspMRJob, self).emr_job_runner_kwargs()
-        config['num_ec2_instances'] = 1
-        config['ec2_instance_type'] = 'm1.small'
         config['bootstrap_scripts'] += ["s3://speechdiarizer32/deploy.sh"]
         config['setup_cmds'] += ["export PATH=/home/hadoop/opt/local/bin:$PATH"]
         config['setup_cmds'] += ["export LD_LIBRARY_PATH=/home/hadoop/opt/local/lib:$LD_LIBRARY_PATH"]
@@ -54,8 +42,7 @@ class AspMRJob(MRJob):
         Hadoop specific configuration options.
         """
         config = super(AspMRJob, self).hadoop_job_runner_kwargs()
-        config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
-        config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
+        #config['hadoop_extra_args'] += ["--verbose"]
         return config
 
 # this appears to be necessary because this script will be called as __main__ on
