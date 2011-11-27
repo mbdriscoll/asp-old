@@ -13,7 +13,7 @@ class FtdockMRJob(mr.AspMRJob):
     
     def job_runner_kwargs(self):
         config = super(mr.AspMRJob, self).job_runner_kwargs()
-        config['file_upload_args'] += [('--ftdockargs', "/Users/driscoll/sejits/cloud_ftdock/pickled_args")]
+        config['file_upload_args'] += [('--ftdockargs', "pickled_args")]
         config['cmdenv']['PYTHONPATH'] = "/Users/driscoll/sejits/asp:/Users/driscoll/sejits/ftdock_v2.0"
         return config
     
@@ -29,8 +29,9 @@ class FtdockMRJob(mr.AspMRJob):
 
 class AllCombMap(object):
 
-    def __init__(self, lists_to_combine, *ftdock_args):
+    def __init__(self, lists_to_combine, ftdock_fxn, *ftdock_args):
         self._lists_to_combine = lists_to_combine
+        self._ftdock_fnx = ftdock_fxn
         self._ftdock_args = ftdock_args
 
     def execute(self, nproc=1):
