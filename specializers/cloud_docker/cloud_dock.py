@@ -12,7 +12,7 @@ class FtdockMRJob(mr.AspMRJob):
         self.add_file_option('--ftdockargs')
     
     def job_runner_kwargs(self):
-        config = super(mr.AspMRJob, self).job_runner_kwargs()
+        config = super(FtdockMRJob, self).job_runner_kwargs()
         config['file_upload_args'] += [('--ftdockargs', "pickled_args")]
         config['cmdenv']['PYTHONPATH'] = ":".join([
             "/Users/driscoll/sejits/asp",
