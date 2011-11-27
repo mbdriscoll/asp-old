@@ -1,6 +1,7 @@
 from mrjob.protocol import PickleProtocol as protocol
 from asp.jit import mapreduce_support as mr
 import cPickle as pickle
+from stat import *
 
 class FtdockMRJob(mr.AspMRJob):
 
@@ -54,6 +55,11 @@ class AllCombMap(object):
         
         # Dump the ftdock_args in a file
         pickle.dump(ftdock_args, open('pickled_args','w')) 
+        import os
+        os.chmod("pickled_args", S_IRUSR | S_IWUSR | S_IXUSR | \
+                                 S_IRGRP | S_IXGRP |           \
+                                 S_IROTH | S_IXOTH             )
+                         
         
         # Add a map task for each point in the search space
         import itertools
