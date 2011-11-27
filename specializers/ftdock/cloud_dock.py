@@ -44,8 +44,8 @@ class AllCombMap(object):
 
     def execute(self, nproc=1):
         cloud_flag = True
-        mapper = self.ftdock_using_mapreduce if cloud_flag else self.ftdock_classic
-        return mapper(self._lists_to_combine, self._ftdock_args)
+        mapfxn = self.ftdock_using_mapreduce if cloud_flag else self.ftdock_classic
+        return mapfxn(self._lists_to_combine, self._ftdock_args)
 
     def ftdock_using_mapreduce(self, lists_to_combine, ftdock_args):
         """
