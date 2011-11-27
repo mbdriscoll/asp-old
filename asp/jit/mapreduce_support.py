@@ -21,7 +21,6 @@ class AspMRJob(MRJob):
         config = super(AspMRJob, self).job_runner_kwargs()
         config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
         config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
-        config['cmdenv']["PYTHONPATH"] = '/global/homes/d/driscoll/carver/asp:/global/homes/d/driscoll/carver'
         config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
         #config['bootstrap_mrjob'] = False
         return config

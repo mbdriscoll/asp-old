@@ -14,7 +14,12 @@ class FtdockMRJob(mr.AspMRJob):
     def job_runner_kwargs(self):
         config = super(mr.AspMRJob, self).job_runner_kwargs()
         config['file_upload_args'] += [('--ftdockargs', "pickled_args")]
-        config['cmdenv']['PYTHONPATH'] = "/Users/driscoll/sejits/asp:/Users/driscoll/sejits/ftdock_v2.0"
+        config['cmdenv']['PYTHONPATH'] = ":".join([
+            "/Users/driscoll/sejits/asp",
+            "/Users/driscoll/sejits/ftdock_v2.0",
+            "/global/homes/d/driscoll/carver/asp",
+            "/global/homes/d/driscoll/carver/ftdock_v2.0"
+        ])
         return config
     
     def mapper(self, key, value):
