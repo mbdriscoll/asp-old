@@ -20,6 +20,8 @@ class FtdockMRJob(mr.AspMRJob):
             "/global/homes/d/driscoll/carver/asp",
             "/global/homes/d/driscoll/carver/ftdock_v2.0"
         ])
+        config['bootstrap_mrjob'] = False
+        config['hadoop_extra_args'] += ["--verbose"]
         return config
     
     def mapper(self, key, value):

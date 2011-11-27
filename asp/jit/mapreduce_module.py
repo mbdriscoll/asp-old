@@ -55,10 +55,9 @@ class MapReduceBackend(object):
         from asp.jit.mapreduce_support import AspMRJob
         from sys import stderr
 
-        def mr_callable(*args, **kwargs):
-            my_input = map(str, args[0])
+        def mr_callable(args):
             mr_args = ['-r', self.toolchain.cluster]
-            job = AspMRJobCls(args=mr_args).sandbox(stdin=my_input)
+            job = AspMRJobCls(args=mr_args).sandbox(stdin=args)
             runner = job.make_runner()
             runner.run()
             kv_pairs = map(job.parse_output_line, runner.stream_output())
