@@ -4,8 +4,8 @@ import cPickle as pickle
 
 class FtdockMRJob(mr.AspMRJob):
 
-    DEFAULT_INPUT_PROTOCOL = 'pickle'
-    DEFAULT_PROTOCOL = 'pickle'
+    DEFAULT_INPUT_PROTOCOL = 'pickle_value'
+    DEFAULT_PROTOCOL = 'pickle_value'
     
     def configure_options(self):
         super(mr.AspMRJob, self).configure_options()
@@ -23,17 +23,8 @@ class FtdockMRJob(mr.AspMRJob):
         """
         from ftdock_main import ftdock
         arguments = pickle.load(open('pickled_args'))
-        geometry_res = ftdock(key[0], key[1], key[2], *arguments)
-        yield 1, geometry_res
-    
-    def reducer(self, key, values):
-        """
-        The reducer just emits the list of geometries
-        """
-        result = []
-        for temp in values:
-            result.append(temp)
-        yield 1, result
+        geometry_res = ftdock(value[0], value[1], value[2], *arguments)
+        yield None, geometry_res
 
 
 class AllCombMap(object):
@@ -58,13 +49,13 @@ class AllCombMap(object):
         
         # Add a map task for each point in the search space
         import itertools
-        task_args = [protocol.write(x, "") for x in itertools.product(*lists_to_combine)]
+        task_args = [protocol.write(x, None) for x in itertools.product(*lists_to_combine)]
     
         import asp.jit.asp_module as asp_module
         mod = asp_module.ASPModule(use_mapreduce=True)
         mod.add_mr_function("ftdock_mr", FtdockMRJob)
         kv_pairs = mod.ftdock_mr(task_args)
-        return kv_pairs[0][1]
+        return map(lambda (k,v): v, kv_pairs)
     
     def ftdock_classic(self, lists_to_combine, ftdock_args):
         """
