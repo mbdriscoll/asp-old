@@ -8,10 +8,6 @@ class FtdockMRJob(mr.AspMRJob):
     DEFAULT_INPUT_PROTOCOL = 'pickle'
     DEFAULT_PROTOCOL = 'pickle'
     
-    def configure_options(self):
-        super(mr.AspMRJob, self).configure_options()
-        self.add_file_option('--ftdockargs')
-    
     def job_runner_kwargs(self):
         config = super(FtdockMRJob, self).job_runner_kwargs()
         config['cmdenv']['PYTHONPATH'] = ":".join([
@@ -21,7 +17,10 @@ class FtdockMRJob(mr.AspMRJob):
             "/global/homes/d/driscoll/carver/ftdock_v2.0"
         ])
         config['bootstrap_mrjob'] = False
-        config['hadoop_extra_args'] += ["--verbose"]
+        config['hadoop_extra_args'] += [
+            "-verbose",
+            "-mapdebug", "/global/homes/d/driscoll/carver/debug/debugger.sh"
+        ]
         return config
     
     def mapper(self, key, value):
@@ -31,7 +30,7 @@ class FtdockMRJob(mr.AspMRJob):
         from ftdock_main import ftdock
         dim, arguments = key
         geometry_res = ftdock(dim[0], dim[1], dim[2], *arguments)
-        yield None, geometry_res
+        yield 1, geometry_res
 
 
 class AllCombMap(object):
