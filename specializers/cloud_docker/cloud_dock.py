@@ -10,6 +10,7 @@ class FtdockMRJob(mr.AspMRJob):
 
     def job_runner_kwargs(self):
         config = super(FtdockMRJob, self).job_runner_kwargs()
+        config['upload_files'] += ["pickled_args"]
         config['cmdenv']['PYTHONPATH'] = ":".join([
             "/Users/driscoll/sejits/asp",
             "/Users/driscoll/sejits/ftdock_v2.0",
@@ -23,13 +24,13 @@ class FtdockMRJob(mr.AspMRJob):
         ]
         return config
     
-    def mapper(self, key, value):
+    def mapper(self, dim, _):
         """
         Each mapper executes ftdock for a combination (qi, qj, qk)
         """
         from ftdock_main import ftdock
         import ftdock_Grid3D
-        dim, arguments = key, value
+        arguments = pickle.load(open('pickled_args'))
         geometry_res = ftdock(dim[0], dim[1], dim[2], *arguments)
         yield 1, geometry_res
 
@@ -53,8 +54,12 @@ class AllCombMap(object):
         print "Map-Reduce execution"
         
         # Add a map task for each point in the search space
-        import itertools
-        task_args = [protocol.write(dim, ftdock_args)+"\n" for dim in itertools.product(*lists_to_combine)]
+        import itertools, os
+        task_args = [protocol.write(dim, None)+"\n" for dim in itertools.product(*lists_to_combine)]
+        pickle.dump(ftdock_args, open('pickled_args','w'))
+        os.chmod("pickled_args", S_IRUSR | S_IWUSR | S_IXUSR | \
+                                 S_IRGRP | S_IXGRP |           \
+                                 S_IROTH | S_IXOTH             )
 
         import asp.jit.asp_module as asp_module
         mod = asp_module.ASPModule(use_mapreduce=True)
