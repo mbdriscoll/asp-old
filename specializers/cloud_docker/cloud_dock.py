@@ -5,8 +5,8 @@ from stat import *
 
 class FtdockMRJob(mr.AspMRJob):
 
-    DEFAULT_INPUT_PROTOCOL = 'pickle_value'
-    DEFAULT_PROTOCOL = 'pickle_value'
+    DEFAULT_INPUT_PROTOCOL = 'pickle'
+    DEFAULT_PROTOCOL = 'pickle'
     
     def configure_options(self):
         super(mr.AspMRJob, self).configure_options()
@@ -14,7 +14,6 @@ class FtdockMRJob(mr.AspMRJob):
     
     def job_runner_kwargs(self):
         config = super(FtdockMRJob, self).job_runner_kwargs()
-        config['file_upload_args'] += [('--ftdockargs', "pickled_args")]
         config['cmdenv']['PYTHONPATH'] = ":".join([
             "/Users/driscoll/sejits/asp",
             "/Users/driscoll/sejits/ftdock_v2.0",
@@ -30,8 +29,8 @@ class FtdockMRJob(mr.AspMRJob):
         Each mapper executes ftdock for a combination (qi, qj, qk)
         """
         from ftdock_main import ftdock
-        arguments = pickle.load(open('pickled_args'))
-        geometry_res = ftdock(value[0], value[1], value[2], *arguments)
+        dim, arguments = key
+        geometry_res = ftdock(dim[0], dim[1], dim[2], *arguments)
         yield None, geometry_res
 
 
@@ -53,17 +52,9 @@ class AllCombMap(object):
         """
         print "Map-Reduce execution"
         
-        # Dump the ftdock_args in a file
-        pickle.dump(ftdock_args, open('pickled_args','w')) 
-        import os
-        os.chmod("pickled_args", S_IRUSR | S_IWUSR | S_IXUSR | \
-                                 S_IRGRP | S_IXGRP |           \
-                                 S_IROTH | S_IXOTH             )
-                         
-        
         # Add a map task for each point in the search space
         import itertools
-        task_args = [protocol.write(x, None) for x in itertools.product(*lists_to_combine)]
+        task_args = [protocol.write((dim, ftdock_args), None) for dim in itertools.product(*lists_to_combine)]
     
         import asp.jit.asp_module as asp_module
         mod = asp_module.ASPModule(use_mapreduce=True)
