@@ -7,7 +7,7 @@ class FtdockMRJob(mr.AspMRJob):
 
     DEFAULT_INPUT_PROTOCOL = 'pickle'
     DEFAULT_PROTOCOL = 'pickle'
-    
+
     def job_runner_kwargs(self):
         config = super(FtdockMRJob, self).job_runner_kwargs()
         config['cmdenv']['PYTHONPATH'] = ":".join([
@@ -28,7 +28,8 @@ class FtdockMRJob(mr.AspMRJob):
         Each mapper executes ftdock for a combination (qi, qj, qk)
         """
         from ftdock_main import ftdock
-        dim, arguments = key
+        import ftdock_Grid3D
+        dim, arguments = key, value
         geometry_res = ftdock(dim[0], dim[1], dim[2], *arguments)
         yield 1, geometry_res
 
@@ -53,7 +54,7 @@ class AllCombMap(object):
         
         # Add a map task for each point in the search space
         import itertools
-        task_args = [protocol.write((dim, ftdock_args), None) for dim in itertools.product(*lists_to_combine)]
+        task_args = [protocol.write(dim, ftdock_args) for dim in itertools.product(*lists_to_combine)]
     
         import asp.jit.asp_module as asp_module
         mod = asp_module.ASPModule(use_mapreduce=True)

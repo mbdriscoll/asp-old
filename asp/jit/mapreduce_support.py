@@ -22,7 +22,6 @@ class AspMRJob(MRJob):
         config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
         config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
         config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
-        #config['bootstrap_mrjob'] = False
         return config
 
     def emr_job_runner_kwargs(self):
