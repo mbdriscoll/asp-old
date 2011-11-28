@@ -54,8 +54,8 @@ class AllCombMap(object):
         
         # Add a map task for each point in the search space
         import itertools
-        task_args = [protocol.write(dim, ftdock_args) for dim in itertools.product(*lists_to_combine)]
-    
+        task_args = [protocol.write(dim, ftdock_args)+"\n" for dim in itertools.product(*lists_to_combine)]
+
         import asp.jit.asp_module as asp_module
         mod = asp_module.ASPModule(use_mapreduce=True)
         mod.add_mr_function("ftdock_mr", FtdockMRJob)
