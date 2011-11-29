@@ -20,6 +20,7 @@ class AspMRJob(MRJob):
         """
         config = super(AspMRJob, self).job_runner_kwargs()
         config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
+        config['jobconf']['mapred.line.input.format.linespermap'] = 28
         config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
         config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
         return config
