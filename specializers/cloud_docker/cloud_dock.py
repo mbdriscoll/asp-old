@@ -19,7 +19,7 @@ class FtdockMRJob(mr.AspMRJob):
         ])
         config['bootstrap_mrjob'] = False
         config['hadoop_extra_args'] += [
-            "-verbose",
+        #    "-verbose",
             "-mapdebug", "/global/homes/d/driscoll/carver/debug/debugger.sh"
         ]
         return config

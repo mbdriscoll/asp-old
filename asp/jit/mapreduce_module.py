@@ -56,7 +56,7 @@ class MapReduceBackend(object):
         from sys import stderr
 
         def mr_callable(args):
-            mr_args = ['--strict-protocols', '-v', '-r', self.toolchain.cluster]
+            mr_args = ['--strict-protocols', '-r', self.toolchain.cluster]
             job = AspMRJobCls(args=mr_args).sandbox(stdin=args)
             runner = job.make_runner()
             runner.run()
