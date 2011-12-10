@@ -404,8 +404,12 @@ class GMM(object):
             self.insert_base_code_into_listed_modules(['cilk_boost'])
             self.insert_non_rendered_code_into_cilk_module()
             self.insert_rendered_code_into_module('cilk_boost')
+            GMM.asp_mod.backends['cilk_boost'].codepy_toolchain.cflags.append('-fPIC')
             GMM.asp_mod.backends['cilk'].codepy_toolchain.cc = 'icc'
-            GMM.asp_mod.backends['cilk'].codepy_toolchain.cflags = ['-O2','-gcc', '-ip','-fPIC']
+            GMM.asp_mod.backends['cilk'].codepy_toolchain.cflags = ['-O2','-gcc', '-ip','-fPIC'
+                                                                    #, '-isystem/$HOME/local/intel/composer_xe_2011_sp1.7.256/include/cilk', '-isystem/$HOME/local/intel/composer_xe_2011_sp1.7.256/include'
+                                                                    #, '-D__INTEL_COMPILER'
+                                                                    ]
 
         # Setup toolchain and compile
 
@@ -783,5 +787,4 @@ def compute_distance_BIC_idx(gmm1, gmm2, data, index_list):
     score = temp_GMM.eval_data.likelihood - (gmm1.eval_data.likelihood + gmm2.eval_data.likelihood)
     
     return temp_GMM, score
-
 
