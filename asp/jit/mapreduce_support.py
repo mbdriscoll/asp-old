@@ -21,8 +21,6 @@ class AspMRJob(MRJob):
         config = super(AspMRJob, self).job_runner_kwargs()
         config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
         config['jobconf']['mapred.line.input.format.linespermap'] = 28
-        config['cmdenv']["LD_LIBRARY_PATH"] = '/global/homes/d/driscoll/carver/opt/local/lib'
-        config['python_bin'] = "/global/homes/d/driscoll/carver/opt/local/bin/python"
         return config
 
     def emr_job_runner_kwargs(self):
@@ -41,7 +39,6 @@ class AspMRJob(MRJob):
         Hadoop specific configuration options.
         """
         config = super(AspMRJob, self).hadoop_job_runner_kwargs()
-        #config['hadoop_extra_args'] += ["--verbose"]
         return config
 
 # this appears to be necessary because this script will be called as __main__ on

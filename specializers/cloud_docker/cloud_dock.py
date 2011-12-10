@@ -1,3 +1,5 @@
+#import sys; print >>sys.stderr, sys.path
+
 from mrjob.protocol import PickleProtocol as protocol
 from asp.jit import mapreduce_support as mr
 import cPickle as pickle
@@ -15,13 +17,18 @@ class FtdockMRJob(mr.AspMRJob):
             "/Users/driscoll/sejits/asp",
             "/Users/driscoll/sejits/ftdock_v2.0",
             "/global/homes/d/driscoll/carver/asp",
-            "/global/homes/d/driscoll/carver/ftdock_v2.0"
+            "/global/homes/d/driscoll/carver/ftdock_v2.0",
+            "/home/hadoop/opt/asp",
+            "/home/hadoop/opt/mrjob",
+            "/home/hadoop/opt/ftdock_v2.0"
         ])
+        config['cmdenv']["LD_LIBRARY_PATH"] = '/home/hadoop/opt/local/lib'
         config['bootstrap_mrjob'] = False
         config['hadoop_extra_args'] += [
-        #    "-verbose",
-            "-mapdebug", "/global/homes/d/driscoll/carver/debug/debugger.sh"
+             "-verbose",
+        #    "-mapdebug", "/global/homes/d/driscoll/carver/debug/debugger.sh"
         ]
+        config['python_bin'] = "/home/hadoop/opt/local/bin/python"
         return config
     
     def mapper(self, dim, _):
