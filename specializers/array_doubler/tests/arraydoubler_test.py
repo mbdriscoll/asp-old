@@ -14,7 +14,10 @@ class BasicTests(unittest.TestCase):
         self.assertEquals(result[0], 2.0)
 
     def test_mapreduce(self):
-        arr = [float(x) for x in range(3)]
+        arr = [float(x) for x in range(10)]
+        # shuffle the input to ensure mr preserves order
+        import random;
+        random.shuffle(arr)
         result = ArrayDoubler().double_using_mapreduce(arr)
         self.assertEquals(result, map(lambda x: x*2, arr))
 

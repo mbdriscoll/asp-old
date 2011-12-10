@@ -14,7 +14,7 @@ class MapReduceToolchain:
     """
     Tools to execute mapreduce jobs.
     """
-    def __init__(self, cluster='local'):
+    def __init__(self, cluster='hadoop'):
         MapReduceDetector.detect_or_exit(cluster)
         self.cluster = cluster # (local|hadoop|emr)
 
@@ -55,14 +55,12 @@ class MapReduceBackend(object):
         from asp.jit.mapreduce_support import AspMRJob
         from sys import stderr
 
-        def mr_callable(*args, **kwargs):
-            my_input = map(str, args[0])
-            mr_args = ['-r', self.toolchain.cluster]
-            job = AspMRJobCls(args=mr_args).sandbox(stdin=my_input)
+        def mr_callable(args):
+            mr_args = ['--verbose', '--strict-protocols', '-r', self.toolchain.cluster]
+            job = AspMRJobCls(args=mr_args).sandbox(stdin=args)
             runner = job.make_runner()
             runner.run()
             kv_pairs = map(job.parse_output_line, runner.stream_output())
-            assert len(kv_pairs) == 1
-            return kv_pairs[0][1]
+            return kv_pairs
 
         return mr_callable
