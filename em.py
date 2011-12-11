@@ -171,18 +171,18 @@ class GMM(object):
     }
 
     def cuda_backend_render_func(param_dict, vals):
-        cu_kern_tpl = AspTemplate.Template(filename="templates/em_cuda_kernels.mako", disable_unicode=True)
+        cu_kern_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_cuda_kernels.mako", disable_unicode=True)
         cu_kern_rend = cu_kern_tpl.render( param_val_list = vals, **param_dict)
         GMM.asp_mod.add_to_module([Line(cu_kern_rend)],'cuda')
-        c_decl_tpl = AspTemplate.Template(filename="templates/em_cuda_launch_decl.mako", disable_unicode=True) 
+        c_decl_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_cuda_launch_decl.mako", disable_unicode=True) 
         c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
         GMM.asp_mod.add_to_preamble(c_decl_rend,'cuda_boost')
         
     def cilk_backend_render_func(param_dict, vals):
-        cilk_kern_tpl = AspTemplate.Template(filename="templates/em_cilk_kernels.mako", disable_unicode=True)
+        cilk_kern_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_cilk_kernels.mako", disable_unicode=True)
         cilk_kern_rend = cilk_kern_tpl.render( param_val_list = vals, **param_dict)
         GMM.asp_mod.add_to_module([Line(cilk_kern_rend)],'cilk')
-        c_decl_tpl = AspTemplate.Template(filename="templates/em_cilk_kernel_decl.mako", disable_unicode=True) 
+        c_decl_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_cilk_kernel_decl.mako", disable_unicode=True) 
         c_decl_rend  = c_decl_tpl.render( param_val_list = vals, **param_dict)
         GMM.asp_mod.add_to_preamble(c_decl_rend,'cilk_boost')
 
@@ -404,8 +404,12 @@ class GMM(object):
             self.insert_base_code_into_listed_modules(['cilk_boost'])
             self.insert_non_rendered_code_into_cilk_module()
             self.insert_rendered_code_into_module('cilk_boost')
+            GMM.asp_mod.backends['cilk_boost'].codepy_toolchain.cflags.append('-fPIC')
             GMM.asp_mod.backends['cilk'].codepy_toolchain.cc = 'icc'
-            GMM.asp_mod.backends['cilk'].codepy_toolchain.cflags = ['-O2','-gcc', '-ip','-fPIC']
+            GMM.asp_mod.backends['cilk'].codepy_toolchain.cflags = ['-O2','-gcc', '-ip','-fPIC'
+                                                                    #, '-isystem/$HOME/local/intel/composer_xe_2011_sp1.7.256/include/cilk', '-isystem/$HOME/local/intel/composer_xe_2011_sp1.7.256/include'
+                                                                    #, '-D__INTEL_COMPILER'
+                                                                    ]
 
         # Setup toolchain and compile
 
@@ -422,7 +426,7 @@ class GMM(object):
         return GMM.asp_mod
 
     def insert_base_code_into_listed_modules(self, names_of_modules):
-        c_base_tpl = AspTemplate.Template(filename="templates/em_base_helper_funcs.mako", disable_unicode=True)
+        c_base_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_base_helper_funcs.mako", disable_unicode=True)
         c_base_rend = c_base_tpl.render()
         component_t_decl ="""
             typedef struct components_struct {
@@ -476,10 +480,10 @@ class GMM(object):
             GMM.asp_mod.add_to_preamble([Include(x, True)],'cuda_boost')
 
         #Add bodies of helper functions
-        c_base_tpl = AspTemplate.Template(filename="templates/em_cuda_host_helper_funcs.mako", disable_unicode=True)
+        c_base_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_cuda_host_helper_funcs.mako", disable_unicode=True)
         c_base_rend  = c_base_tpl.render()
         GMM.asp_mod.add_to_module([Line(c_base_rend)],'cuda_boost')
-        cu_base_tpl = AspTemplate.Template(filename="templates/em_cuda_device_helper_funcs.mako", disable_unicode=True)
+        cu_base_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_cuda_device_helper_funcs.mako", disable_unicode=True)
         cu_base_rend = cu_base_tpl.render()
         GMM.asp_mod.add_to_module([Line(cu_base_rend)],'cuda')
         #Add Boost interface links for helper functions
@@ -500,7 +504,7 @@ class GMM(object):
                 float* Rinv;   // Inverse of covariance matrix: [M*D*D]
             } components_t;"""
         GMM.asp_mod.add_to_preamble(component_t_decl,'cilk')
-        cilk_base_tpl = AspTemplate.Template(filename="templates/em_cilk_helper_funcs.mako", disable_unicode=True)
+        cilk_base_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_cilk_helper_funcs.mako", disable_unicode=True)
         cilk_base_rend = cilk_base_tpl.render()
         GMM.asp_mod.add_to_module([Line(cilk_base_rend)],'cilk')
 
@@ -520,9 +524,9 @@ class GMM(object):
         vals = map(param_dict.get, param_names)
         # Use vals to render templates 
         backend_filename = backend_name[:-6] if backend_name.endswith('_boost') else backend_name
-        c_train_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_train.mako", disable_unicode=True)
-        c_eval_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_eval.mako", disable_unicode=True)
-        c_seed_tpl = AspTemplate.Template(filename="templates/em_"+backend_filename+"_seed.mako", disable_unicode=True)
+        c_train_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_"+backend_filename+"_train.mako", disable_unicode=True)
+        c_eval_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_"+backend_filename+"_eval.mako", disable_unicode=True)
+        c_seed_tpl = AspTemplate.Template(filename="/global/homes/p/penpornk/asp/templates/em_"+backend_filename+"_seed.mako", disable_unicode=True)
         c_train_rend  = c_train_tpl.render( param_val_list = vals, **param_dict)
         c_eval_rend  = c_eval_tpl.render( param_val_list = vals, **param_dict)
         c_seed_rend  = c_seed_tpl.render( param_val_list = vals, **param_dict)
@@ -783,5 +787,4 @@ def compute_distance_BIC_idx(gmm1, gmm2, data, index_list):
     score = temp_GMM.eval_data.likelihood - (gmm1.eval_data.likelihood + gmm2.eval_data.likelihood)
     
     return temp_GMM, score
-
 
