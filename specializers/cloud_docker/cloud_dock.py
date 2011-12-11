@@ -1,17 +1,19 @@
-#import sys; print >>sys.stderr, sys.path
+import sys; print >>sys.stderr, "from mac, sys.path:", sys.path
 
 from mrjob.protocol import PickleProtocol as protocol
-from asp.jit import mapreduce_support as mr
+from mrjob.job import MRJob
 import cPickle as pickle
 from stat import *
 
-class FtdockMRJob(mr.AspMRJob):
+class FtdockMRJob(MRJob):
 
     DEFAULT_INPUT_PROTOCOL = 'pickle'
     DEFAULT_PROTOCOL = 'pickle'
 
     def job_runner_kwargs(self):
         config = super(FtdockMRJob, self).job_runner_kwargs()
+        config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
+        config['jobconf']['mapred.line.input.format.linespermap'] = 28
         config['upload_files'] += ["pickled_args"]
         config['cmdenv']['PYTHONPATH'] = ":".join([
             "/Users/driscoll/sejits/asp",
@@ -22,15 +24,29 @@ class FtdockMRJob(mr.AspMRJob):
             "/home/hadoop/opt/mrjob",
             "/home/hadoop/opt/ftdock_v2.0"
         ])
-        config['cmdenv']["LD_LIBRARY_PATH"] = '/home/hadoop/opt/local/lib'
         config['bootstrap_mrjob'] = False
-        config['hadoop_extra_args'] += [
-             "-verbose",
-        #    "-mapdebug", "/global/homes/d/driscoll/carver/debug/debugger.sh"
-        ]
-        config['python_bin'] = "/home/hadoop/opt/local/bin/python"
         return config
     
+    def emr_job_runner_kwargs(self):
+        config = super(FtdockMRJob, self).emr_job_runner_kwargs()
+        config['bootstrap_scripts'] += ["s3://ftdock32/deploy.sh"]
+        config['setup_cmds'] += ["export PATH=/home/hadoop/opt/local/bin:$PATH"]
+        config['setup_cmds'] += ["export LD_LIBRARY_PATH=/home/hadoop/opt/local/lib:$LD_LIBRARY_PATH"]
+        config['cmdenv']["LD_LIBRARY_PATH"] = '/home/hadoop/opt/local/lib'
+        config['python_bin'] = "/home/hadoop/opt/local/bin/python"
+        config['ec2_master_instance_type'] = "m1.small"
+        config['ec2_slave_instance_type'] = "m1.small"
+        config['num_ec2_instances'] = 226
+        return config
+
+    def hadoop_job_runner_kwargs(self):
+        config = super(FtdockMRJob, self).hadoop_job_runner_kwargs()
+        config['hadoop_extra_args'] += [
+        #    "-verbose",
+        #    "-mapdebug", "/global/homes/d/driscoll/carver/debug/debugger.sh"
+        ]
+        return config
+
     def mapper(self, dim, _):
         """
         Each mapper executes ftdock for a combination (qi, qj, qk)

@@ -14,7 +14,7 @@ class MapReduceToolchain:
     """
     Tools to execute mapreduce jobs.
     """
-    def __init__(self, cluster='hadoop'):
+    def __init__(self, cluster='emr'):
         MapReduceDetector.detect_or_exit(cluster)
         self.cluster = cluster # (local|hadoop|emr)
 
@@ -56,7 +56,7 @@ class MapReduceBackend(object):
         from sys import stderr
 
         def mr_callable(args):
-            mr_args = ['--verbose', '--strict-protocols', '-r', self.toolchain.cluster]
+            mr_args = ['--strict-protocols', '-r', self.toolchain.cluster]
             job = AspMRJobCls(args=mr_args).sandbox(stdin=args)
             runner = job.make_runner()
             runner.run()
