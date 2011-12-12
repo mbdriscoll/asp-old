@@ -366,7 +366,7 @@ class MultipleFuncTests(unittest.TestCase):
         mod.test(1,2)
         mod.test(1,2)
         mod.test(2,1)
-        mod.save_method_timings("test")
+        #mod.save_method_timings("test")
         mod.clear_method_timings("test")
         mod.restore_method_timings("test")
         self.assertNotEqual(

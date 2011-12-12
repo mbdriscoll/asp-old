@@ -437,7 +437,7 @@ class EMTester(object):
                 print "Cloud flag: %d" % cloud_flag
                 if len(iter_bic_list) >= 2:
                     best_BIC_score, merged_tuple, best_merged_gmm, ind1, ind2 = self.compute_All_BICs(iter_bic_list, cloud_flag)
-        
+        	print "after best_BIC_score"
 
             # Merge the winning candidate pair if its deriable to do so
    
@@ -738,7 +738,7 @@ if __name__ == '__main__':
                                 'min_iters': ['1'] }
                             }
 
-    emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cilk'])
+    emt = EMTester(True, f, sp, variant_param_spaces, device_id, 0, ['cuda'])
     emt.new_gmm_list(num_comps, num_gmms)
     most_likely = emt.cluster(kl_ntop, num_seg_iters_init, num_seg_iters, seg_length)
     #emt.new_gmm_list(num_comps, num_gmms)
