@@ -326,11 +326,11 @@ class GMM(object):
             self.use_cuda = True
             if GMM.device_id == None:
                 GMM.device_id = device_id
-                self.get_gpu_util_mod().set_GPU_device(device_id)
+                self.get_gpu_util_mod().set_GPU_device(device_id if device_id is not None else 0)
             elif GMM.device_id != device_id:
                 #TODO: May actually be allowable if deallocate all GPU allocations first?
                 print "WARNING: As python only has one thread context, it can only use one GPU at a time, and you are attempting to run on a second GPU."
-            self.capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device_id)
+            self.capability = self.get_gpu_util_mod().get_GPU_device_capability_as_tuple(self.device_id if self.device_id is not None else 0)
             #TODO: Figure out some kind of class inheiritance to deal with the complexity of functionality and perf params
             self.device = DeviceCUDA10() if self.capability[0] < 2 else DeviceCUDA20()
         if 'cilk' in names_of_backends_to_use:

@@ -5,17 +5,26 @@ from em import *
 
 class AllPairsBicScoreMRJob(mr.AspMRJob):
 
+    DEFAULT_INPUT_PROTOCOL = 'pickle'
+    DEFAULT_PROTOCOL = 'pickle'
+
     def job_runner_kwargs(self):
         config = super(AllPairsBicScoreMRJob, self).job_runner_kwargs()
         config['hadoop_input_format'] = "org.apache.hadoop.mapred.lib.NLineInputFormat"
-        config['jobconf']['mapred.line.input.format.linespermap'] = 28
+        config['jobconf']['mapred.line.input.format.linespermap'] = 1
         config['cmdenv']['PYTHONPATH'] = ":".join([
             "/home/hadoop/opt/asp",
             "/home/hadoop/opt/hcook",
             "/home/hadoop/opt/mrjob",
         ])
+        config['cmdenv']['LD_LIBRARY_PATH'] = ":".join([
+            "/home/hadoop/opt/local/lib",
+	    "/usr/local/cuda/lib64",
+	    "/usr/local/cuda/lib"
+        ])
         config['setup_cmds'] += ['export PATH=/home/hadoop/opt/local/bin:$PATH']
         config['setup_cmds'] += ['export LD_LIBRARY_PATH=/home/hadoop/opt/local/lib:$LD_LIBRARY_PATH']
+        config['python_bin'] = '/home/hadoop/opt/local/bin/python'
         config['bootstrap_mrjob'] = False
         return config
 
@@ -24,11 +33,18 @@ class AllPairsBicScoreMRJob(mr.AspMRJob):
         Each mapper computes the BIC score for a GMM pair
         """
 	import sys
-	print >>sys.stderr, "something"
         index1, index2 = key        
         g1, g2, data = value
-        new_gmm, score = compute_distance_BIC(g1, g2, data)
+	new_gmm = g1
+	score = 0
+	print >>sys.stderr, "K,V", key, value
+	try:
+       		new_gmm, score = compute_distance_BIC(g1, g2, data)
+	except:
+		print sys.stderr, "SKIPPING", g1, g2
+		raise
         data_to_yield = (score, new_gmm, g1, g2, index1, index2)
+	print "MAP YIELDS", data_to_yield
         yield 1, data_to_yield
     
     
@@ -76,7 +92,7 @@ class AllPairsBicScore(object):
                 an_item = pr.PickleProtocol().write((gmm1idx,gmm2idx),(g1, g2, data))
                 input.append(an_item+"\n")     
         
-        mr_args = ['-r', 'local','--input-protocol', 'pickle','--output-protocol','pickle','--protocol','pickle']
+        mr_args = ['-v', '-r', 'hadoop','--input-protocol', 'pickle','--output-protocol','pickle','--protocol','pickle']
         job = AllPairsBicScoreMRJob(args=mr_args).sandbox(stdin=input)
         runner = job.make_runner()
         runner.run()
