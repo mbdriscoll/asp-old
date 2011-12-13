@@ -366,7 +366,7 @@ class GMM(object):
             ("""
             boost::python::tuple get_GPU_device_capability_as_tuple(int device) {
               int major, minor;
-              cuDeviceComputeCapability(&major, &minor, device);
+              cuInit(0);              cuDeviceComputeCapability(&major, &minor, device);
               return boost::python::make_tuple(major, minor);
             }
             """, "get_GPU_device_capability_as_tuple")]
@@ -787,4 +787,3 @@ def compute_distance_BIC_idx(gmm1, gmm2, data, index_list):
     score = temp_GMM.eval_data.likelihood - (gmm1.eval_data.likelihood + gmm2.eval_data.likelihood)
     
     return temp_GMM, score
-
